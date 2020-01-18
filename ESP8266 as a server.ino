@@ -29,6 +29,7 @@ IPAddress APsubnet(255, 255, 255, 0);
 IPAddress IPdev1(192, 168, 4, 101);
 IPAddress IPdev2(192, 168, 4, 102);
 IPAddress IPdev3(192, 168, 4, 103);
+IPAddress IPdev4(192, 168, 4, 104); //bathroom
 unsigned int TCPPort = 2390;
 
 WiFiServer  TCP_SERVER(TCPPort);      // THE SERVER AND THE PORT NUMBER
@@ -47,7 +48,7 @@ void process_Message(String);
 unsigned long now3 = millis();
 unsigned long now4 = millis();//data timer sending to clients
 int conected = 0;
-unsigned long dev1 = 0, dev2 = 0, dev3 = 0;
+unsigned long dev1 = 0, dev2 = 0, dev3 = 0, dev4 = 0;
 
 bool started;
 int Day=0, Time=0, Hour=0,Min=0,Sec=0;
@@ -61,6 +62,11 @@ public:
 	unsigned long time=0;
 	int signal=0;
 	bool connected=false;
+	float temp = 0;
+	float humid = 0;
+	unsigned long lastRecieved = 0;
+	int status = 0;
+	float field1 = 0;//spare field, for bathroom used as humidAver
 };
 class Timed {
 public:
@@ -72,11 +78,15 @@ public:
 Timed Time1dev;
 Timed Time2dev;
 Timed Time3dev;
+Timed Time4dev;
 Device Device1;
 Device Device2;
 Device Device3;
+Device Device4; //bathroom
 Device Device_undidentified;//assigneed for data if device name is unindentified
-int devToShow = 0;
+int devToShow = 0;//counter which device to show
+float h = 0;
+float t = 0;
 void setup(void) {
 	Serial.begin(115200);
   //dht.begin();
@@ -103,20 +113,11 @@ void getTime(int *Day, int *Hour, int*Min, int *Sec,unsigned long Now) {
 	*Sec = (Now / (1000));
 
 }
-
-
-void loop(void) {
-	String con="";
-	String time = "";
-	HandleClients();
-	if (millis() > (now3 + 2000)) {
+void display() {
+	{
+		String con = "";
+		String time = "";
 		now3 = millis();
-		//delay(dht.getMinimumSamplingPeriod());
-		float h = dht.getHumidity();
-		float t = dht.getTemperature();
-		
-		//Serial.println(h);
-		//Serial.println(t);
 		u8g2.clearBuffer();
 		u8g2.drawStr(0, 15, "lt");
 		u8g2.drawStr(0, 32, "lh");
@@ -126,42 +127,70 @@ void loop(void) {
 		u8g2.print(t);
 		u8g2.drawStr(67, 15, "gt");
 		u8g2.drawStr(67, 32, "gh");
-		u8g2.setCursor(85, 15);
-		u8g2.print(temp);
-		u8g2.setCursor(85, 32);
-		u8g2.print(humid);
-		if (devToShow == 0) {
-			getTime(&Day, &Hour, &Min, &Sec, millis());
-			time= "d" + String(Day) + "h" + String(Hour) + "m" + String(Min) + "s" + String(Sec)+ "con "+String(conected);
-			unsigned long total = dev1 + dev2 + dev3;
-			con = "mes tot"+String(total) ;
-			devToShow++;
+		
+		if (devToShow == 0) {			
+				getTime(&Day, &Hour, &Min, &Sec, millis());
+				time = "d" + String(Day) + "h" + String(Hour) + "m" + String(Min) + "s" + String(Sec) + "con " + String(conected);
+				unsigned long total = dev1 + dev2 + dev3 + dev4;
+				con = "mes tot" + String(total);
 		}
-		else if (devToShow == 1) {
-			 getTime(&Time1dev.Day, &Time1dev.Hour, &Time1dev.Min, &Time1dev.Sec, Device1.time);
-			 time = "d" + String(Time1dev.Day) + "h" + String(Time1dev.Hour) + "m" + String(Time1dev.Min) + "s" + String(Time1dev.Sec) ;
-			con = "1Str "+String(Device1.signal) + "."  +String(dev1)  ;
-			devToShow++;
+		if (devToShow == 1) {
+			if (Device1.connected) {
+				getTime(&Time1dev.Day, &Time1dev.Hour, &Time1dev.Min, &Time1dev.Sec, Device1.time);
+				time = "d" + String(Time1dev.Day) + "h" + String(Time1dev.Hour) + "m" + String(Time1dev.Min) + "s" + String(Time1dev.Sec);
+				con = "1Str " + String(Device1.signal) + "." + String(dev1);
+				u8g2.setCursor(85, 15);
+				u8g2.print(Device1.temp);
+				u8g2.setCursor(85, 32);
+				u8g2.print(Device1.humid);
+			}
+			else devToShow++;
 		}
-		else if ((devToShow == 2)){
-			getTime(&Time2dev.Day, &Time2dev.Hour, &Time2dev.Min, &Time2dev.Sec, Device2.time);
-			time = "d" + String(Time2dev.Day) + "h" + String(Time2dev.Hour) + "m" + String(Time2dev.Min) + "s" + String(Time2dev.Sec);
-			con = "2Str " + String(Device2.signal) + "." + String(dev2) ;
-			 devToShow++;
+		if (devToShow == 2) {
+			if (Device2.connected) {
+				getTime(&Time2dev.Day, &Time2dev.Hour, &Time2dev.Min, &Time2dev.Sec, Device2.time);
+				time = "d" + String(Time2dev.Day) + "h" + String(Time2dev.Hour) + "m" + String(Time2dev.Min) + "s" + String(Time2dev.Sec);
+				con = "2Str " + String(Device2.signal) + "." + String(dev2);
+			}
+			else devToShow++;
 		}
-		else {
-		getTime(&Time3dev.Day, &Time3dev.Hour, &Time3dev.Min, &Time3dev.Sec, Device3.time);
-		time = "d" + String(Time3dev.Day) + "h" + String(Time3dev.Hour) + "m" + String(Time3dev.Min) + "s" + String(Time3dev.Sec);
-		con = "3Str " + String(Device3.signal) + "." + String(dev3);
-
-			devToShow = 0;
+		if (devToShow == 3){
+			if (Device3.connected) {
+				getTime(&Time3dev.Day, &Time3dev.Hour, &Time3dev.Min, &Time3dev.Sec, Device3.time);
+				time = "d" + String(Time3dev.Day) + "h" + String(Time3dev.Hour) + "m" + String(Time3dev.Min) + "s" + String(Time3dev.Sec);
+				con = "3Str " + String(Device3.signal) + "." + String(dev3);
+			}
+			else devToShow ++;
 		}
+		if (devToShow == 4) {
+			if (Device4.connected) {
+				getTime(&Time4dev.Day, &Time4dev.Hour, &Time4dev.Min, &Time4dev.Sec, Device4.time);
+				time = "d" + String(Time4dev.Day) + "h" + String(Time4dev.Hour) + "m" + String(Time4dev.Min) + "s" + String(Time4dev.Sec);
+				con = "4D" + String(Device4.signal) + "|" + String(dev4)+"|"+String(Device4.status)+ "|" + String(Device4.field1);
+				u8g2.setCursor(85, 15);
+				u8g2.print(Device4.temp);
+				u8g2.setCursor(85, 32);
+				u8g2.print(Device4.humid);
+			}
+			devToShow=0;
+		}
+		else devToShow++;
 		u8g2.setCursor(0, 46);
 		u8g2.print(con);
 		u8g2.setCursor(0, 61);
 		u8g2.print(time);
 		u8g2.sendBuffer();
 
+	}
+}
+
+void loop(void) {
+	
+	HandleClients();
+	if (millis() > (now3 + 2000)) {
+		 h = dht.getHumidity();
+		 t = dht.getTemperature();
+		display();
 	}
 	
 		while(digitalRead(LED0) == HIGH){
@@ -200,11 +229,11 @@ void loop(void) {
 			}
 		}
 
-		if (millis() > (now4 + 2000)) {//send continues messages to clients
+		/*if (millis() > (now4 + 2000)) {//send continues messages to clients
 			now4 = millis();
-			/*if (Device1.connected) {
+			if (Device1.connected) {
 				sentToClientNew(0, String(millis()));
-			}*/
+			}
 			if (Device2.connected) {
 				sentToClientNew(1, String(millis()));
 			}
@@ -212,6 +241,7 @@ void loop(void) {
 				sentToClientNew(2, String(millis()));
 			}
 		}
+		*/
 }
 
 
@@ -289,63 +319,74 @@ void HandleClients() {
 			TCP_Clients[2] = Temp;
 			TCP_Clients[2].setNoDelay(1);
 		}
+		else if (IP == IPdev4) {
+			if (!Device4.connected)	Device4.connected = true;
+			else Nown = true;
+			TCP_Clients[3] = Temp;
+			TCP_Clients[3].setNoDelay(1);
+		}
 		
 		String readMess = Temp.readStringUntil('\r\n');
 		Serial.println(" First message of a new client : " + readMess);
 		
 			
 	}
-	bool MessageGot = false;
+	
 	String Message;
 	yield();
-		if (TCP_Clients[2].connected() && TCP_Clients[2].available()) {
-			Message = TCP_Clients[2].readStringUntil('\r\n');
-			MessageGot = true;
-		}
-		else if (TCP_Clients[1].connected() && TCP_Clients[1].available()) {
-			Message = TCP_Clients[1].readStringUntil('\r\n');
-			MessageGot = true;
-		}
-		else if (TCP_Clients[0].connected() && TCP_Clients[0].available()) {
-			Message = TCP_Clients[0].readStringUntil('\r\n');
-			MessageGot = true;
-		}
-if (MessageGot){
+	for(int i=0;i<4;++i){
+		if (TCP_Clients[i].connected() && TCP_Clients[i].available()) {
+			Message = TCP_Clients[i].readStringUntil('\r\n');
 			Serial.print(" Content: ");
 			Serial.println(Message);
 			new_process_Msessage(Message);
-			                          
+			break;
 		}
-	
+		
+	}
+
+			
+			                          
 }
+	
+
 void new_process_Msessage(String Message) {
 	int device = 0,index=0;
 	unsigned long value;
 	Device*Deviceptr= &Device_undidentified;
 	if (get_field_value(Message, "Device:", &value, &index)) {
 		device=int(value);
-
 	
-	switch (device) {
+	switch (device) {// conunt message recieved from clients
 	case 1: Deviceptr=&Device1; dev1++;   break;
 	case 2: Deviceptr = &Device2; dev2++;   break;
 	case 3: Deviceptr = &Device3;  dev3++; break;
+	case 4: Deviceptr = &Device4;  dev4++; break;
 	default:	break;
 	}
 	Deviceptr->name = value;
 	}
+	Deviceptr->lastRecieved = millis();
 	if (get_field_value(Message, "time:", &value, &index)) {
 		Deviceptr->time = value;
 	}
 	if (get_field_value(Message, "signal:", &value, &index)) {
 		Deviceptr->signal = int(value);
 	}
-	if (get_field_value(Message, "temp:", &value,&index)) {
-		temp = value/pow(10,index);
+	if (get_field_value(Message, "temp:", &value,&index)) {//index means that the value is float and it determens numbers after ','
+		Deviceptr->temp = value/pow(10,index);
 		}
 	if (get_field_value(Message, "humid:", &value, &index)) {
-		humid = value / pow(10, index);
+		Deviceptr->humid = value / pow(10, index);
 		}
+	if (Deviceptr->name == 4) {
+		if (get_field_value(Message, "humidAv:", &value, &index)) {
+			Deviceptr->field1 = int(value / pow(10, index));
+		}
+		if (get_field_value(Message,"status:", &value, &index)) {
+			Deviceptr->status = int(value / pow(10, index));
+		}
+	}
 	//Serial.println("device: " + String(Deviceptr->name) + " time: " + String(Deviceptr->time) +
 	//	" signal: " + String(Deviceptr->signal));
 }
