@@ -87,6 +87,10 @@ Device Device_undidentified;//assigneed for data if device name is unindentified
 int devToShow = 0;//counter which device to show
 float h = 0;
 float t = 0;
+int unsigned long timers[10];
+bool timer(int tNamber, unsigned long tDelay);
+long timeToCheckConnected = 60000;//time interval to check connected
+void checkConnected();
 void setup(void) {
 	Serial.begin(115200);
   //dht.begin();
@@ -229,11 +233,13 @@ void loop(void) {
 			}
 		}
 
-		/*if (millis() > (now4 + 2000)) {//send continues messages to clients
+		if (millis() > (now4 + 2000)) {//send continues messages to clients
 			now4 = millis();
-			if (Device1.connected) {
-				sentToClientNew(0, String(millis()));
+			if (Device4.connected) {
+				sentToClientNew(3, "humid:"+String(h)+";");
 			}
+		}
+			/*
 			if (Device2.connected) {
 				sentToClientNew(1, String(millis()));
 			}
@@ -242,8 +248,28 @@ void loop(void) {
 			}
 		}
 		*/
-}
+		if (timer(1, 60000)) { if (conected > 0) checkConnected(); }
 
+}
+bool timer(int tNamber, unsigned long tDelay) {
+	unsigned long current = millis();
+	if (current > (timers[tNamber] + tDelay)) {
+		timers[tNamber] = current; return true;
+	}
+	else return false;
+}
+void checkConnected() {//check the real status of sent message
+	unsigned long Tnow = millis();
+	Device*Deviceptr;
+	for (int i = 0; i < 4; i++) {
+		if (i == 0)Deviceptr = &Device1;
+		else if (i == 1)Deviceptr = &Device2;
+		else if (i == 2)Deviceptr = &Device3;
+		else if (i == 3)Deviceptr = &Device4;
+		if (Deviceptr->lastRecieved + timeToCheckConnected < Tnow )Deviceptr->connected = false;
+		else Deviceptr->connected = true;
+	}
+}
 
 void SetWifi(char* Name, char* Password) {
 	// Stop any previous WIFI
