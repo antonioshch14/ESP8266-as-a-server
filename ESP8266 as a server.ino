@@ -8,6 +8,20 @@
 #include <ESP8266WiFi.h>
 //#include <ESP8266WebServer.h>
 #include "DHTesp.h"
+#include <WiFiUdp.h>
+
+
+
+WiFiUDP UDP;                     // Create an instance of the WiFiUDP class to send and receive
+
+IPAddress timeServerIP;          // time.nist.gov NTP server address
+const char* NTPServerName = "time.nist.gov";
+
+const int NTP_PACKET_SIZE = 48;  // NTP time stamp is in the first 48 bytes of the message
+
+byte NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
+
+
 int     LED0 = 16;         // WIFI Module LED
 int sendTriger = 5; // triger to send data to client 3
 int sendTriger2 = 4; // triger to send data to client 2
@@ -91,6 +105,48 @@ int unsigned long timers[10];
 bool timer(int tNamber, unsigned long tDelay);
 long timeToCheckConnected = 60000;//time interval to check connected
 void checkConnected();
+class task {
+public:
+	unsigned long period;
+	bool ignor=false;
+	void reLoop() {
+		taskLoop = millis();
+	};
+	bool check() {
+		if (!ignor) {
+			if (millis() - taskLoop > period) {
+				taskLoop = millis();
+				return true;
+			}
+		}
+			return false;
+	}
+	void StartLoop(unsigned long shift) {
+		taskLoop = millis()+ shift;
+	}
+	task(unsigned long t) {
+		period = t;
+	}
+private:
+	unsigned long taskLoop;
+
+};
+task task1(10000);//connection to NTP
+task taskSendNTPrequest(100);//sending NTP request
+//--------------------------NTP
+unsigned long intervalNTP = 60000; // Request NTP time every minute
+unsigned long prevNTP = 0;
+unsigned long lastNTPResponse = millis();
+uint32_t timeUNIX = 0;
+unsigned long prevActualTime = 0;
+bool NTPconnected = false;
+uint32_t actualTime;
+//IPAddress staticIP(192, 168, 1, 22);
+
+//IPAddress gateway(192, 168, 1, 1);
+//
+//IPAddress subnet(255, 255, 255, 0);
+
 void setup(void) {
 	Serial.begin(115200);
   //dht.begin();
@@ -106,7 +162,83 @@ void setup(void) {
   pinMode(sendTriger, INPUT);
   pinMode(sendTriger2, INPUT);
   Serial.setDebugOutput(true);
+  //---------------------------------
+  startWiFi();                   // Try to connect to some given access points. Then wait for a connection
+  startUDP();
+
+
+
 }
+void startWiFi() { // Try to connect to some given access points. Then wait for a connection
+	
+	char ssid[] = "Keenetic-4574"; //  Your network SSID (name)
+	char pass[] = "Gfmsd45kaxu69$"; // Your network password
+	WiFi.begin(ssid, pass);
+	//WiFi.config(staticIP, gateway, subnet);
+	WiFiClient client; // Initialize the WiFi client library
+	//WiFi.mode(WIFI_STA);
+	/*while (WiFi.status() != WL_CONNECTED) {
+		Serial.print("Attempting to connect to SSID: ");
+		Serial.println(ssid);
+		
+		Serial.print("WiFimode is "); Serial.println(WiFi.getMode());// Connect to WPA/WPA2 network. Change this line if using open or WEP network
+		delay(1000);  // Wait 1 second to connect
+	}*/
+}
+//----------------------NTP--------------
+void startUDP() {
+	Serial.println("Starting UDP");
+	UDP.begin(123);                          // Start listening for UDP messages on port 123
+	Serial.print("Local port:\t");
+	Serial.println(UDP.localPort());
+	Serial.println();
+}
+uint32_t getTime() {
+	if (UDP.parsePacket() == 0) { // If there's no response (yet)
+		return 0;
+	}
+	UDP.read(NTPBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+	// Combine the 4 timestamp bytes into one 32-bit number
+	uint32_t NTPTime = (NTPBuffer[40] << 24) | (NTPBuffer[41] << 16) | (NTPBuffer[42] << 8) | NTPBuffer[43];
+	// Convert NTP time to a UNIX timestamp:
+	// Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
+	const uint32_t seventyYears = 2208988800UL;
+	// subtract seventy years:
+	uint32_t UNIXTime = NTPTime - seventyYears+60*60*3;
+	return UNIXTime;
+}
+
+void sendNTPpacket(IPAddress& address) {
+	memset(NTPBuffer, 0, NTP_PACKET_SIZE);  // set all bytes in the buffer to 0
+	// Initialize values needed to form NTP request
+	//NTPBuffer[0] = 0b11100011;   // LI, Version, Mode
+	// send a packet requesting a timestamp:
+	NTPBuffer[0] = 0b11100011;   // LI, Version, Mode 
+	NTPBuffer[1] = 0;     // Stratum, or type of clock
+	NTPBuffer[2] = 6;     // Polling Interval
+	NTPBuffer[3] = 0xEC;  // Peer Clock Precision
+	// 8 bytes of zero for Root Delay & Root Dispersion
+	NTPBuffer[12] = 49;
+	NTPBuffer[13] = 0x4E;
+	NTPBuffer[14] = 49;
+	NTPBuffer[15] = 52;
+	UDP.beginPacket(address, 123); // NTP requests are to port 123
+	UDP.write(NTPBuffer, NTP_PACKET_SIZE);
+	UDP.endPacket();
+}
+
+inline int getSeconds(uint32_t UNIXTime) {
+	return UNIXTime % 60;
+}
+
+inline int getMinutes(uint32_t UNIXTime) {
+	return UNIXTime / 60 % 60;
+}
+
+inline int getHours(uint32_t UNIXTime) {
+	return UNIXTime / 3600 % 24;
+}
+
 void getTime(int *Day, int *Hour, int*Min, int *Sec,unsigned long Now) {
 	*Day = (Now / (1000 * 60 * 60 * 24));
 	Now = Now - (*Day*(1000 * 60 * 60 *24));
@@ -136,7 +268,7 @@ void display() {
 				getTime(&Day, &Hour, &Min, &Sec, millis());
 				time = "d" + String(Day) + "h" + String(Hour) + "m" + String(Min) + "s" + String(Sec) + "con " + String(conected);
 				unsigned long total = dev1 + dev2 + dev3 + dev4;
-				con = "mes tot" + String(total);
+				con = String(getHours(actualTime))+":"+ String(getMinutes(actualTime))+":"+ String(getSeconds(actualTime))+ "m" + String(total);
 		}
 		if (devToShow == 1) {
 			if (Device1.connected) {
@@ -187,8 +319,54 @@ void display() {
 
 	}
 }
+bool connectToNtp() {
+	if (WiFi.hostByName(NTPServerName, timeServerIP)) { // Get the IP address of the NTP server
 
+		Serial.print("Time server IP:\t");
+		Serial.println(timeServerIP);
+
+		Serial.println("\r\nSending NTP request ...");
+		sendNTPpacket(timeServerIP);
+		return true;
+	}
+	Serial.println("DNS lookup failed.");
+	startUDP();
+	return false;
+}
 void loop(void) {
+	if (task1.check()) {Serial.println("Check()");
+		if (WiFi.status() == WL_CONNECTED && !NTPconnected) {
+			Serial.println("WL_CONNECTED");
+			NTPconnected = connectToNtp();
+			task1.ignor = NTPconnected;
+		}
+	}
+	if (NTPconnected) {
+		unsigned long currentMillis = millis();
+
+		if (taskSendNTPrequest.check()) { // If a minute has passed since last NTP request
+			//prevNTP = currentMillis;
+			Serial.println("\r\nSending NTP request ...");
+			sendNTPpacket(timeServerIP);               // Send an NTP request
+			taskSendNTPrequest.period = 100;//hurry up to obtain time from NTP
+		}
+		yield();
+		uint32_t time = getTime();                   // Check if an NTP response has arrived and get the (UNIX) time
+		if (time) {                                  // If a new timestamp has been received
+			Serial.println("time " + String(time));
+			timeUNIX = time;
+			Serial.print("NTP response:\t");
+			Serial.println(timeUNIX);
+			lastNTPResponse = currentMillis;
+			taskSendNTPrequest.period=1000*60*60*24;//slow down requestes when the time is obtained
+			WiFi.disconnect;
+
+		}
+
+		actualTime = timeUNIX + (currentMillis - lastNTPResponse) / 1000;
+		
+	}
+	//-----------------------END NTP--------------------
 	
 	HandleClients();
 	if (millis() > (now3 + 2000)) {
@@ -249,7 +427,7 @@ void loop(void) {
 		}
 		*/
 		if (timer(1, 60000)) { if (conected > 0) checkConnected(); }
-
+		
 }
 bool timer(int tNamber, unsigned long tDelay) {
 	unsigned long current = millis();
@@ -273,7 +451,7 @@ void checkConnected() {//check the real status of sent message
 
 void SetWifi(char* Name, char* Password) {
 	// Stop any previous WIFI
-	WiFi.disconnect();
+	//WiFi.disconnect();
 
 	// Setting The Wifi Mode
 	WiFi.mode(WIFI_AP_STA);
