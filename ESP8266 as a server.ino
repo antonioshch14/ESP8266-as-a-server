@@ -3,13 +3,21 @@
 //this is a new branch for the test reason
 
 
+//#include <WiFiClient.h>
+//#include <WiFi.h>
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <ESP8266WiFi.h>
 //#include <ESP8266WebServer.h>
 #include "DHTesp.h"
 #include <WiFiUdp.h>
-
+#include <FS.h>
+#include "Network.h"
+#include "Sys_Variables.h"
+#include "CSS.h"
+#include <SPI.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
 
 
 WiFiUDP UDP;                     // Create an instance of the WiFiUDP class to send and receive
@@ -81,8 +89,10 @@ public:
 	unsigned long lastRecieved = 0;
 	int status = 0;
 	float field1 = 0;//spare field, for bathroom used as humidAver
+	String logFileName;
+	bool newNameAssignedAfteShift;
 };
-class Timed {
+class Timed { //time of messages from devices
 public:
 	int Day=0;
 	int Hour=0;
@@ -93,10 +103,12 @@ Timed Time1dev;
 Timed Time2dev;
 Timed Time3dev;
 Timed Time4dev;
+Device Device0; //server
 Device Device1;
 Device Device2;
 Device Device3;
 Device Device4; //bathroom
+
 Device Device_undidentified;//assigneed for data if device name is unindentified
 int devToShow = 0;//counter which device to show
 float h = 0;
@@ -134,6 +146,7 @@ private:
 task task1(10000);//connection to NTP
 task taskSendNTPrequest(100);//sending NTP request
 //--------------------------NTP
+task taskMemmoryClear(5000);//check and clear memmory
 unsigned long intervalNTP = 60000; // Request NTP time every minute
 unsigned long prevNTP = 0;
 unsigned long lastNTPResponse = millis();
@@ -147,17 +160,234 @@ uint32_t actualTime;
 //
 //IPAddress subnet(255, 255, 255, 0);
 
+class TimeSet {
+	int monthDays[12] = { 31,28,31,30,31,30,31,31,30,31,30,31 }; // API starts months from 1, this array starts from 0
+	int *shift;
+	time_t lastUpdate;//time when the time was updated, used for current time calculation
+	time_t actual_Time;
+	time_t UNIXtime;
+public:
+	int NowMonth;
+	int NowYear;
+	int NowDay;
+	int NowWeekDay;
+	int lastShift;
+	int NowHour;
+	int NowMin;
+	int NowSec;
+	int Now10Min;
+	String FileNewManeParameter; //defines file name assingnement whether: min, 10min, hour, day
+	int sec() {
+		updateCurrecnt();
+		return actual_Time % 60;
+	};
+	int min() {
+		updateCurrecnt();
+		return actual_Time / 60 % 60;
+	};
+	int hour() {
+		updateCurrecnt();
+		return actual_Time / 3600 % 24;
+	};
+
+	time_t SetCurrentTime(time_t timeToSet) { //call each time after recieving updated time
+		lastUpdate = millis();
+		UNIXtime = timeToSet;
+	}//call each time after recieving updated time
+	void updateDay() {
+		updateCurrecnt();
+		breakTime(&NowYear, &NowMonth, &NowDay, &NowWeekDay);
+		Serial.println(String(NowYear) + ":" + String(NowMonth) + ":" + String(NowDay) + ":" + String(NowWeekDay));
+	}// call in setup and each time when new day comes 
+	bool Shift() {  //check whether there is a new day comes, first call causes alignement of tracked and checked day 
+		//Serial.println("lastShift " + String(lastShift) + "  *shift " + String(*shift));
+		if (lastShift != *shift) {
+			lastShift = *shift;
+			return true;
+		}
+		else return false;
+	} //call to check whether the day is changed
+	void begin(int shiftType=1) //1-day,2-hiur,3-10 minutes
+	{
+		switch (shiftType)
+		{
+		case 1:shift = &NowDay;
+			FileNewManeParameter = "day";
+			break;
+		case 2:shift = &NowHour;
+			FileNewManeParameter = "hour";
+			break;
+		case 3:shift = &Now10Min;
+			FileNewManeParameter = "10min";
+			break;
+		case 4:shift = &NowMin;
+			FileNewManeParameter = "min";
+			break;
+		default:shift = &NowDay;
+			FileNewManeParameter = "day";
+			break;
+		}
+	};
+private:
+
+	void updateCurrecnt() {
+		actual_Time = UNIXtime + (millis() - lastUpdate) / 1000;
+
+	}
+
+	bool LEAP_YEAR(time_t Y) {
+		//((1970 + (Y)) > 0) && !((1970 + (Y)) % 4) && (((1970 + (Y)) % 100) || !((1970 + (Y)) % 400)) ;
+		if ((1970 + (Y)) > 0) {
+			if ((1970 + (Y)) % 4 == 0) {
+				if ((((1970 + (Y)) % 100) != 0) || (((1970 + (Y)) % 400) == 0)) return true;
+			}
+			else return false;
+		}
+		else return false;
+	}
+
+	void breakTime(int *Year, int *Month, int *day, int *week) {
+		// break the given time_t into time components
+		// this is a more compact version of the C library localtime function
+		// note that year is offset from 1970 !!!
+
+		int year;
+		int month, monthLength;
+		uint32_t time;
+		unsigned long days;
+
+		time = (uint32_t)actual_Time;
+		NowSec = time % 60;
+		time /= 60; // now it is minutes
+		NowMin = time % 60;
+		Now10Min = time % 600;
+		time /= 60; // now it is hours
+		NowHour = time % 24;
+		time /= 24; // now it is days
+		*week = int(((time + 4) % 7));  // Monday is day 1 
+
+		year = 0;
+		days = 0;
+		while ((unsigned)(days += (LEAP_YEAR(year) ? 366 : 365)) <= time) {
+			year++;
+		}
+		*Year = year + 1970; // year is offset from 1970 
+
+		days -= LEAP_YEAR(year) ? 366 : 365;
+		time -= days; // now it is days in this year, starting at 0
+
+		days = 0;
+		month = 0;
+		monthLength = 0;
+		for (month = 0; month < 12; month++) {
+			if (month == 1) { // february
+				if (LEAP_YEAR(year)) {
+					monthLength = 29;
+				}
+				else {
+					monthLength = 28;
+				}
+			}
+			else {
+				monthLength = monthDays[month];
+			}
+
+			if (time >= monthLength) {
+				time -= monthLength;
+			}
+			else {
+				break;
+			}
+		}
+		*Month = month + 1;  // jan is month 1  
+		*day = time + 1;     // day of month
+	}
+};
+TimeSet Time_set;
+String fileName = "/temp.csv";
+File fsUploadFile;                                    // a File variable to temporarily store the received file
+task writeToLog(10000);
+class fileSt {
+	
+public:
+	String name;
+	unsigned long nameFirst;
+	String size;
+	bool checked;//true if the file checked on the number
+	unsigned long number_csv;
+	void checkNameOnNumber( String beginer, String end) {//check a file on name that is a 
+	//number: beginer, end, there to save if 0 to name, if 1 to nameFirst
+		
+		int fieldBegin = name.indexOf(beginer) + beginer.length()-1;
+		int check_field = name.indexOf(beginer);
+		int filedEnd = name.indexOf(end);
+		number_csv = 0;
+		if (check_field != -1 && filedEnd != -1) {
+			for (int i = filedEnd - 1; i > fieldBegin; i--) {
+				char ch = name[i];
+				if (isDigit(ch)) {
+					int val = ch - 48;
+					number_csv += ((val * pow(10, filedEnd - 1 - i)));
+				}
+				if (number_csv > 4294967293)break;
+			}
+			checked = false;
+		}
+		else {
+			//Serial.println("Fail to find a begginer or end");
+			checked = true;
+		}
+		//Serial.println(" *numbrPtr= " +String(*numbrPtr)+ String(number_csv));
+	}
+};
+
+int filesStoredIndex;
+const int maxFiles = 20;
+fileSt filesStored[maxFiles];
+ESP8266WebServer server(80);             // create a web server on port 80
+byte packetBuffer[NTP_PACKET_SIZE];      // A buffer to hold incoming and outgoing packets
+const char* mdnsName = "esp8266";
+unsigned long  usedBytes;
+void memoryStatus() {
+
+	uint32_t realSize = ESP.getFlashChipRealSize();
+	uint32_t ideSize = ESP.getFlashChipSize();
+	FlashMode_t ideMode = ESP.getFlashChipMode();
+
+	Serial.printf("Flash real id:   %08X\n", ESP.getFlashChipId());
+	Serial.printf("Flash real size: %u bytes\n\n", realSize);
+
+	Serial.printf("Flash ide  size: %u bytes\n", ideSize);
+	Serial.printf("Flash ide speed: %u Hz\n", ESP.getFlashChipSpeed());
+	Serial.printf("Flash ide mode:  %s\n", (ideMode == FM_QIO ? "QIO" : ideMode == FM_QOUT ? "QOUT" : ideMode == FM_DIO ? "DIO" : ideMode == FM_DOUT ? "DOUT" : "UNKNOWN"));
+
+	if (ideSize != realSize) {
+		Serial.println("Flash Chip configuration wrong!\n");
+	}
+	else {
+		Serial.println("Flash Chip configuration ok.\n");
+	}
+	FSInfo sppifs;
+	SPIFFS.info(sppifs);
+	unsigned long totalBytes = sppifs.totalBytes;
+	Device0.time = sppifs.usedBytes;
+	Serial.printf("totalBytes: %u \n", totalBytes);
+	Serial.printf("usedBytes: %u \n", Device0.time);
+	Serial.printf("blockSize: %u \n", sppifs.blockSize);
+	Serial.printf("pageSize: %u \n", sppifs.pageSize);
+	Serial.printf("maxOpenFiles: %u \n", sppifs.maxOpenFiles);
+	Serial.printf("maxPathLength: %u \n", sppifs.maxPathLength);
+	if (100 * (totalBytes - usedBytes) / totalBytes < 25)if (deleteFile(findOldest())) refreshSPIFS();
+}
+
 void setup(void) {
 	Serial.begin(115200);
   //dht.begin();
   dht.setup(0, DHTesp::DHT11); 
   u8g2.begin();
   u8g2.setFont(u8g2_font_crox1c_tf);
-  
-  
   delay(700);
-  // setting up a Wifi AccessPoint
-  SetWifi("DataTransfer","BelovSer");
+  SetWifi("DataTransfer","BelovSer");// setting up a Wifi AccessPoint
   pinMode(LED0, INPUT);
   pinMode(sendTriger, INPUT);
   pinMode(sendTriger2, INPUT);
@@ -165,25 +395,28 @@ void setup(void) {
   //---------------------------------
   startWiFi();                   // Try to connect to some given access points. Then wait for a connection
   startUDP();
+  SPIFFS.begin();
+  checkFileOverFloodAndDelete();              // Start the SPIFFS and list all contents
 
+  startMDNS();                 // Start the mDNS responder
+  Time_set.begin(1);               //start time 1-day,2-hour,3-10 min,4-min
 
-
+  server.on("/", HomePage);
+  server.on("/download", File_Download);
+  server.on("/Delete", File_Delete);
+  server.begin();
+  
 }
 void startWiFi() { // Try to connect to some given access points. Then wait for a connection
 	
 	char ssid[] = "Keenetic-4574"; //  Your network SSID (name)
 	char pass[] = "Gfmsd45kaxu69$"; // Your network password
 	WiFi.begin(ssid, pass);
-	//WiFi.config(staticIP, gateway, subnet);
 	WiFiClient client; // Initialize the WiFi client library
-	//WiFi.mode(WIFI_STA);
-	/*while (WiFi.status() != WL_CONNECTED) {
-		Serial.print("Attempting to connect to SSID: ");
-		Serial.println(ssid);
-		
-		Serial.print("WiFimode is "); Serial.println(WiFi.getMode());// Connect to WPA/WPA2 network. Change this line if using open or WEP network
-		delay(1000);  // Wait 1 second to connect
-	}*/
+	Serial.printf("Connection %s to begin \n\r", ssid);
+}
+void stopWiFi() {
+	WiFi.disconnect();
 }
 //----------------------NTP--------------
 void startUDP() {
@@ -207,12 +440,10 @@ uint32_t getTime() {
 	uint32_t UNIXTime = NTPTime - seventyYears+60*60*3;
 	return UNIXTime;
 }
-
+/*
 void sendNTPpacket(IPAddress& address) {
 	memset(NTPBuffer, 0, NTP_PACKET_SIZE);  // set all bytes in the buffer to 0
-	// Initialize values needed to form NTP request
-	//NTPBuffer[0] = 0b11100011;   // LI, Version, Mode
-	// send a packet requesting a timestamp:
+	
 	NTPBuffer[0] = 0b11100011;   // LI, Version, Mode 
 	NTPBuffer[1] = 0;     // Stratum, or type of clock
 	NTPBuffer[2] = 6;     // Polling Interval
@@ -226,19 +457,16 @@ void sendNTPpacket(IPAddress& address) {
 	UDP.write(NTPBuffer, NTP_PACKET_SIZE);
 	UDP.endPacket();
 }
-
+*/
 inline int getSeconds(uint32_t UNIXTime) {
 	return UNIXTime % 60;
 }
-
 inline int getMinutes(uint32_t UNIXTime) {
 	return UNIXTime / 60 % 60;
 }
-
 inline int getHours(uint32_t UNIXTime) {
 	return UNIXTime / 3600 % 24;
 }
-
 void getTime(int *Day, int *Hour, int*Min, int *Sec,unsigned long Now) {
 	*Day = (Now / (1000 * 60 * 60 * 24));
 	Now = Now - (*Day*(1000 * 60 * 60 *24));
@@ -319,7 +547,7 @@ void display() {
 
 	}
 }
-bool connectToNtp() {
+bool connectToNtp() {// replies true if lookup is Ok, otherwise false
 	if (WiFi.hostByName(NTPServerName, timeServerIP)) { // Get the IP address of the NTP server
 
 		Serial.print("Time server IP:\t");
@@ -337,7 +565,7 @@ void loop(void) {
 	if (task1.check()) {Serial.println("Check()");
 		if (WiFi.status() == WL_CONNECTED && !NTPconnected) {
 			Serial.println("WL_CONNECTED");
-			NTPconnected = connectToNtp();
+			NTPconnected = connectToNtp(); // replies true if lookup is Ok, otherwise false
 			task1.ignor = NTPconnected;
 		}
 	}
@@ -347,6 +575,11 @@ void loop(void) {
 		if (taskSendNTPrequest.check()) { // If a minute has passed since last NTP request
 			//prevNTP = currentMillis;
 			Serial.println("\r\nSending NTP request ...");
+			if (WiFi.status() != WL_CONNECTED) { //initiate time obtaining again
+				startWiFi(); //connect back to WiFi router
+				task1.ignor = false;//Start task1 again
+				NTPconnected = false;
+			}
 			sendNTPpacket(timeServerIP);               // Send an NTP request
 			taskSendNTPrequest.period = 100;//hurry up to obtain time from NTP
 		}
@@ -358,32 +591,36 @@ void loop(void) {
 			Serial.print("NTP response:\t");
 			Serial.println(timeUNIX);
 			lastNTPResponse = currentMillis;
+			//taskSendNTPrequest.period=1000*60*3;//test for each 3 minutes
 			taskSendNTPrequest.period=1000*60*60*24;//slow down requestes when the time is obtained
-			WiFi.disconnect;
-
+			Time_set.SetCurrentTime(timeUNIX);
+			stopWiFi();
 		}
 
 		actualTime = timeUNIX + (currentMillis - lastNTPResponse) / 1000;
 		
 	}
 	//-----------------------END NTP--------------------
-	
+	server.handleClient();
+	yield();
 	HandleClients();
 	if (millis() > (now3 + 2000)) {
 		 h = dht.getHumidity();
 		 t = dht.getTemperature();
+		 Device0.temp = t;
+		 Device0.humid = h;
 		display();
 	}
 	
-		while(digitalRead(LED0) == HIGH){
+	/*while(digitalRead(LED0) == HIGH){
 		if(!started)Serial.print("reading stopped  ");
 		started = true;
 		delay(500);
 		Serial.print(".");
 	}
 		if (started) {
-			Serial.println("reading begined"); started = false;
-		}
+			Serial.println("reading began"); started = false;
+		}*/
 		if (Device3.connected) {
 			if (!sendBegin && digitalRead(sendTriger) == HIGH) {
 
@@ -414,7 +651,7 @@ void loop(void) {
 		if (millis() > (now4 + 2000)) {//send continues messages to clients
 			now4 = millis();
 			if (Device4.connected) {
-				sentToClientNew(3, "humid:"+String(h)+";");
+				sentToClientNew(3, "humid:"+String(h+7)+";");
 			}
 		}
 			/*
@@ -427,7 +664,17 @@ void loop(void) {
 		}
 		*/
 		if (timer(1, 60000)) { if (conected > 0) checkConnected(); }
-		
+		if (timeUNIX && writeToLog.check()) logDeviceGotData(0);
+		if (Serial.available()) {// read serial for command
+			String SerialCommand = Serial.readStringUntil('\r');
+			if (SerialCommand == "memmory") memoryStatus();
+			else if (SerialCommand == "list") startSPIFFS();
+			else Serial.println("Print: memmory, list");
+		}
+		if (taskMemmoryClear.check()) {
+			memoryStatus();
+			taskMemmoryClear.period=60 * 1000;
+		}
 }
 bool timer(int tNamber, unsigned long tDelay) {
 	unsigned long current = millis();
@@ -463,7 +710,7 @@ void SetWifi(char* Name, char* Password) {
 
 	// Starting the access point
 	WiFi.softAPConfig(APlocal_IP, APgateway, APsubnet);                 // softAPConfig (local_ip, gateway, subnet)
-	WiFi.softAP(ssid, password, 1, 0, MAXSC);                           // WiFi.softAP(ssid, password, channel, hidden, max_connection)     
+	WiFi.softAP(ssid, password, 9, 0, 8);                           // WiFi.softAP(ssid, password, channel, hidden, max_connection)     
 	Serial.println("WIFI < " + String(ssid) + " > ... Started");
 	Serial.println("password: " + String(password));
 	// wait a bit
@@ -501,6 +748,7 @@ void HandleClients() {
 	unsigned long tNow2 = millis();
 	if (TCP_SERVER.hasClient()) {
 		conected = WiFi.softAPgetStationNum();
+		Device0.field1 = conected;// to store in log file
 		Serial.printf("Stations connected to soft-AP = %d\n", conected);
 		WiFiClient Temp= TCP_SERVER.available();
 		IPAddress IP = Temp.remoteIP();
@@ -530,7 +778,8 @@ void HandleClients() {
 			TCP_Clients[3].setNoDelay(1);
 		}
 		
-		String readMess = Temp.readStringUntil('\r\n');
+		//String readMess = Temp.readStringUntil('\r\n');
+		String readMess = Temp.readStringUntil('\n');
 		Serial.println(" First message of a new client : " + readMess);
 		
 			
@@ -540,7 +789,7 @@ void HandleClients() {
 	yield();
 	for(int i=0;i<4;++i){
 		if (TCP_Clients[i].connected() && TCP_Clients[i].available()) {
-			Message = TCP_Clients[i].readStringUntil('\r\n');
+			Message = TCP_Clients[i].readStringUntil('\n');
 			Serial.print(" Content: ");
 			Serial.println(Message);
 			new_process_Msessage(Message);
@@ -591,8 +840,104 @@ void new_process_Msessage(String Message) {
 			Deviceptr->status = int(value / pow(10, index));
 		}
 	}
+	logDeviceGotData(Deviceptr->name);
 	//Serial.println("device: " + String(Deviceptr->name) + " time: " + String(Deviceptr->time) +
 	//	" signal: " + String(Deviceptr->signal));
+}
+void logDeviceGotData(int deviceDataGot) {
+	bool assignNewName = false;
+	if (timeUNIX ) {
+		Device*Deviceptr ;
+			switch (deviceDataGot) {
+			case 0: Deviceptr = &Device0;    break;
+			case 1: Deviceptr = &Device1;    break;
+			case 2: Deviceptr = &Device2;    break;
+			case 3: Deviceptr = &Device3;   break;
+			case 4: Deviceptr = &Device4;   break;
+			default:	Deviceptr = &Device_undidentified; break;
+			}
+		Time_set.updateDay();
+		Serial.println("current time" + String(Time_set.NowYear) + String(Time_set.NowMonth) +
+			String(Time_set.NowDay) + String(Time_set.NowHour) + String(Time_set.NowMin) + String(Time_set.NowSec));
+		String Time = String(Time_set.NowHour) + ":" + String(Time_set.NowMin) + ":" + String(Time_set.NowSec);
+
+
+		Serial.println(temp + String("  ") + humid);
+		String Fmonth, Fday, Fhour, Fmin;
+		if (Time_set.Shift()) {
+			Device0.newNameAssignedAfteShift = false;
+			Device1.newNameAssignedAfteShift = false;
+			Device2.newNameAssignedAfteShift = false;
+			Device3.newNameAssignedAfteShift = false;
+			Device4.newNameAssignedAfteShift = false;
+			Serial.println("Time shitf occured");
+		}
+		if (!Deviceptr->newNameAssignedAfteShift) {
+			Deviceptr->newNameAssignedAfteShift = true;
+			if (Time_set.NowMonth < 10)Fmonth = "0" + String(Time_set.NowMonth);
+			else Fmonth = String(Time_set.NowMonth);
+			if (Time_set.NowDay < 10)Fday = "0" + String(Time_set.NowDay);
+			else Fday = String(Time_set.NowDay);
+			if (Time_set.FileNewManeParameter != "day") {  //defines file name assingnement whether: min, 10min, hour, day
+				if (Time_set.NowHour < 10)Fhour = "0" + String(Time_set.NowHour);
+				else Fhour = String(Time_set.NowHour);
+				if (Time_set.FileNewManeParameter != "hour") {
+					if (Time_set.NowMin < 10)Fmin = "0" + String(Time_set.NowMin);
+					else Fmin = String(Time_set.NowMin);
+					if (Time_set.FileNewManeParameter != "10min") {
+						Fmin = Fmin.substring(0, 1);
+					}
+				}
+			}
+			int fileLatest = findLatest(deviceDataGot);//find latest log file of such device
+			if (fileLatest >=0 && fileLatest <=maxFiles) {
+				Serial.printf("fileLatest = %d \n\r", fileLatest);
+				//filesStored[fileLatest].checkNameOnNumber("/","_",1); 
+				//name.indexOf(beginer) + beginer.length()-1;
+				String fileNemeTemp = filesStored[fileLatest].name;
+				String cuttedName = fileNemeTemp.substring(fileNemeTemp.indexOf("/")+1, fileNemeTemp.indexOf("_"));
+				Serial.println("file found"+ cuttedName +"  file comoared to "+ String(deviceDataGot) + String(Time_set.NowYear) + Fmonth + Fday +
+					Fhour + Fmin);
+				if (cuttedName == String(deviceDataGot) + String(Time_set.NowYear) + Fmonth + Fday +
+					Fhour + Fmin) {
+					Deviceptr->logFileName = filesStored[fileLatest].name;
+					Serial.println(" find existing file to store Deviceptr->logFileName: " + Deviceptr->logFileName);
+				}
+				else {
+					assignNewName = true;
+					Serial.println(" file not found");
+				}
+			}
+			else assignNewName = true;
+			if (assignNewName){
+				Deviceptr->logFileName = "/" + String(deviceDataGot) + String(Time_set.NowYear) + Fmonth + Fday +
+					Fhour + Fmin + '_' + String(actualTime) + ".csv";
+				Serial.println("Appending temperature to file: " + Deviceptr->logFileName);
+				File tempLog = SPIFFS.open(Deviceptr->logFileName, "a"); // Write the time and the temperature to the csv file
+				tempLog.print(Time);
+				tempLog.println(",DeviceTime,Signal,Temp,Humid,Status,Field1");
+				tempLog.close();
+				checkFileOverFloodAndDelete();               // Start the SPIFFS and list all contents
+			}
+		}
+		//Serial.println("Appending temperature to file: " + Deviceptr->logFileName);
+		File tempLog = SPIFFS.open(Deviceptr->logFileName, "a"); // Write the time and the temperature to the csv file
+		tempLog.print(Time);
+		tempLog.print(',');
+		tempLog.print(Deviceptr->time);
+		tempLog.print(',');
+		tempLog.print(Deviceptr->signal);
+		tempLog.print(',');
+		tempLog.print(Deviceptr->temp);
+		tempLog.print(',');
+		tempLog.print(Deviceptr->humid);
+		tempLog.print(',');
+		tempLog.print(Deviceptr ->status);
+		tempLog.print(',');
+		tempLog.println(Deviceptr->field1);
+		tempLog.close();
+
+	}
 }
 bool get_field_value(String Message, String field, unsigned long* value,int* index) {
 	int fieldBegin = Message.indexOf(field)+ field.length();
@@ -649,4 +994,346 @@ bool get_field_value(String Message, String field, unsigned long* value,int* ind
 		
 	}
 */
+String findOldest() {
+	unsigned long min = 4294967293;
+	int indexOfMin = 0;
+	bool found = false;
+	for (int i = 0; i <= maxFiles - 1; i++) {
+		//	Serial.printf("min %d <= filesStored[i].number_csv %d && !filesStored[i].checked %b",
+		//		min, filesStored[i].number_csv); Serial.println(filesStored[i].checked);
+		if (filesStored[i].number_csv && min >= filesStored[i].number_csv && !filesStored[i].checked) {
+			indexOfMin = i;
+			min = filesStored[i].number_csv;
+			found = true;
+		}
+	}
 
+	Serial.printf(" File name %s position %d\n\r", filesStored[indexOfMin].name.c_str(), indexOfMin);
+	if (found) {
+		filesStored[indexOfMin].checked = true;
+		return filesStored[indexOfMin].name;
+	}
+	else return "Not_found";
+};
+int findLatest(int Dev) {
+	unsigned long max = 0;
+	int indexOfMax = 0;
+	String fileName;
+	bool found = false;
+	for (int i = 0; i <maxFiles ; i++) {
+		//Serial.printf("max %d <= filesStored[i].number_csv %d ",
+		//	max, filesStored[i].number_csv); Serial.println(filesStored[i].checked);
+		if (filesStored[i].number_csv && max <= filesStored[i].number_csv && !filesStored[i].checked) {
+		//	Serial.println("filesStored[i].name: "+ filesStored[i].name);
+			//fileName = filesStored[i].name;
+			//charDev = fileName[1] ;
+			//Serial.println("filesStored[i].name[1] = "+ charDev);
+			if (filesStored[i].name[1]  == Dev+48) {
+				indexOfMax = i;
+				max = filesStored[i].number_csv;
+				found = true;
+			}
+		}
+	}
+
+	Serial.printf(" File latest %d device has name %s position %d\n\r", Dev,filesStored[indexOfMax].name.c_str(), indexOfMax);
+	if (found) {
+		filesStored[indexOfMax].checked = true;
+		return indexOfMax;
+	}
+	else return -1;
+};
+void checkFileOverFloodAndDelete() {
+	while (!startSPIFFS()) {
+		if (deleteFile(findOldest())) refreshSPIFS();
+		else break;
+	};               // Start the SPIFFS and list all contents
+}
+bool startSPIFFS() { // Start the SPIFFS and list all contents
+	//SPIFFS.begin();                             // Start the SPI Flash File System (SPIFFS)
+	filesStoredIndex = -1;
+	Serial.println("SPIFFS started. Contents:");
+	{
+		Dir dir = SPIFFS.openDir("/");
+		while (dir.next()) {                      // List the file system contents
+			filesStoredIndex++;
+			String fileName = dir.fileName();
+			size_t fileSize = dir.fileSize();
+			Serial.printf("\tFS File: %s, size: %s  ", fileName.c_str(), formatBytes(fileSize).c_str()); //\r\n
+			if (filesStoredIndex < maxFiles) {
+				filesStored[filesStoredIndex].name = fileName;
+				filesStored[filesStoredIndex].size = formatBytes(fileSize);
+				filesStored[filesStoredIndex].checkNameOnNumber("_", ".csv");
+				Serial.print(filesStored[filesStoredIndex].number_csv);
+				Serial.printf(" filesStoredIndex %d \r\n", filesStoredIndex);
+			}
+		}
+		Serial.printf("\n");
+	}
+	SPIFFS.gc();//Performs a quick garbage collection operation on SPIFFS, possibly making writes perform faster/better in the future.
+	Serial.printf("filesStoredIndex = %d >= maxFiles = %d \n\r", filesStoredIndex, maxFiles);
+	if (filesStoredIndex >= maxFiles)return false;
+	else return true;
+}
+
+void startMDNS() { // Start the mDNS responder
+	MDNS.begin(mdnsName);                        // start the multicast domain name server
+	Serial.print("mDNS responder started: http://");
+	Serial.print(mdnsName);
+	Serial.println(".local");
+}
+
+void startServer() { // Start a HTTP server with a file read handler and an upload handler
+	server.on("/edit.html", HTTP_POST, []() {  // If a POST request is sent to the /edit.html address,
+		server.send(200, "text/plain", "");
+	}, handleFileUpload);                       // go to 'handleFileUpload'
+
+	server.onNotFound(handleNotFound);          // if someone requests any other file or page, go to function 'handleNotFound'
+	// and check if the file exists
+
+	//server.begin();                             // start the HTTP server
+	Serial.println("HTTP server started.");
+}
+
+/*__________________________________________________________SERVER_HANDLERS__________________________________________________________*/
+
+void handleNotFound() { // if the requested file or page doesn't exist, return a 404 not found error
+	if (!handleFileRead(server.uri())) {        // check if the file exists in the flash memory (SPIFFS), if so, send it
+		server.send(404, "text/plain", "404: File Not Found");
+	}
+}
+bool handleFileRead(String path) { // send the right file to the client (if it exists)
+	Serial.println("handleFileRead: " + path);
+	if (path.endsWith("/")) path += "index.html";          // If a folder is requested, send the index file
+	String contentType = getContentType(path);             // Get the MIME type
+	String pathWithGz = path + ".gz";
+	if (SPIFFS.exists(pathWithGz) || SPIFFS.exists(path)) { // If the file exists, either as a compressed archive, or normal
+		if (SPIFFS.exists(pathWithGz))                         // If there's a compressed version available
+			path += ".gz";                                         // Use the compressed verion
+		File file = SPIFFS.open(path, "r");                    // Open the file
+		size_t sent = server.streamFile(file, contentType);    // Send it to the client
+
+		file.close();                                          // Close the file again
+		Serial.println(String("\tSent file: ") + path);
+		return true;
+	}
+	Serial.println(String("\tFile Not Found: ") + path);   // If the file doesn't exist, return false
+	return false;
+}
+void handleFileUpload() { // upload a new file to the SPIFFS
+	HTTPUpload& upload = server.upload();
+	String path;
+	if (upload.status == UPLOAD_FILE_START) {
+		path = upload.filename;
+		if (!path.startsWith("/")) path = "/" + path;
+		if (!path.endsWith(".gz")) {                         // The file server always prefers a compressed version of a file
+			String pathWithGz = path + ".gz";                  // So if an uploaded file is not compressed, the existing compressed
+			if (SPIFFS.exists(pathWithGz))                     // version of that file must be deleted (if it exists)
+				SPIFFS.remove(pathWithGz);
+		}
+		Serial.print("handleFileUpload Name: "); Serial.println(path);
+		fsUploadFile = SPIFFS.open(path, "w");               // Open the file for writing in SPIFFS (create if it doesn't exist)
+		path = String();
+	}
+	else if (upload.status == UPLOAD_FILE_WRITE) {
+		if (fsUploadFile)
+			fsUploadFile.write(upload.buf, upload.currentSize); // Write the received bytes to the file
+	}
+	else if (upload.status == UPLOAD_FILE_END) {
+		if (fsUploadFile) {                                   // If the file was successfully created
+			fsUploadFile.close();                               // Close the file again
+			Serial.print("handleFileUpload Size: "); Serial.println(upload.totalSize);
+			server.sendHeader("Location", "/success.html");     // Redirect the client to the success page
+			server.send(303);
+		}
+		else {
+			server.send(500, "text/plain", "500: couldn't create file");
+		}
+	}
+}
+/*__________________________________________________________HELPER_FUNCTIONS__________________________________________________________*/
+String formatBytes(size_t bytes) { // convert sizes in bytes to KB and MB
+	if (bytes < 1024) {
+		return String(bytes) + "B";
+	}
+	else if (bytes < (1024 * 1024)) {
+		return String(bytes / 1024.0) + "KB";
+	}
+	else if (bytes < (1024 * 1024 * 1024)) {
+		return String(bytes / 1024.0 / 1024.0) + "MB";
+	}
+	return "";
+}
+String getContentType(String filename) { // determine the filetype of a given filename, based on the extension
+	if (filename.endsWith(".html")) return "text/html";
+	else if (filename.endsWith(".css")) return "text/css";
+	else if (filename.endsWith(".js")) return "application/javascript";
+	else if (filename.endsWith(".ico")) return "image/x-icon";
+	else if (filename.endsWith(".gz")) return "application/x-gzip";
+	return "text/plain";
+}
+/*
+unsigned long getTime() { // Check if the time server has responded, if so, get the UNIX time, otherwise, return 0
+	if (UDP.parsePacket() == 0) { // If there's no response (yet)
+		return 0;
+	}
+	UDP.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+	// Combine the 4 timestamp bytes into one 32-bit number
+	uint32_t NTPTime = (packetBuffer[40] << 24) | (packetBuffer[41] << 16) | (packetBuffer[42] << 8) | packetBuffer[43];
+	// Convert NTP time to a UNIX timestamp:
+	// Unix time starts on Jan 1 1970. That's 2208988800 seconds in NTP time:
+	const uint32_t seventyYears = 2208988800UL;
+	// subtract seventy years:
+	int32_t UNIXTime = NTPTime - seventyYears + 60 * 60 * 3;
+
+	return UNIXTime;
+}
+*/
+void sendNTPpacket(IPAddress& address) {
+	Serial.println("Sending NTP request");
+	memset(packetBuffer, 0, NTP_PACKET_SIZE);  // set all bytes in the buffer to 0
+	// Initialize values needed to form NTP request
+	packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+
+	// send a packet requesting a timestamp:
+	UDP.beginPacket(address, 123); // NTP requests are to port 123
+	UDP.write(packetBuffer, NTP_PACKET_SIZE);
+	UDP.endPacket();
+}
+
+void HomePage() {
+	Serial.println("Home page begins");
+
+	SendHTML_Header();
+	webpage += F("<a href='/download'><button>Download</button></a>");
+	append_page_footer();
+	SendHTML_Content();
+	SendHTML_Stop(); // Stop is needed because no content length was sent
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+void SendHTML_Header() {
+	//server.send(200, "text/plain", "Home page begins"); 
+	server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+	server.sendHeader("Pragma", "no-cache");
+	server.sendHeader("Expires", "-1");
+	server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+	// server.send(200, "text/html", ""); // Empty content inhibits Content-length header so we have to close the socket ourselves.
+	append_page_header();
+	SendHTML_Content();
+	webpage = "";
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+void SendHTML_Stop() {
+	server.sendContent("");
+	server.client().stop(); // Stop is needed because no content length was sent
+}
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+void ReportFileNotPresent(String target) {
+	SendHTML_Header();
+	webpage += F("<h3>File does not exist</h3>");
+	webpage += F("<a href='/"); webpage += target + "'>[Back]</a><br><br>";
+	append_page_footer();
+	SendHTML_Content();
+	SendHTML_Stop();
+}
+//===========================================================================================
+
+void File_Download() { // This gets called twice, the first pass selects the input, the second pass then processes the command line arguments
+	if (server.args() > 0) { // Arguments were received
+		if (server.hasArg("download")) SD_file_download(server.arg(0));
+
+	}
+	else SelectInput("File Download", "Enter filename to download", "download", "download");
+}
+void File_Delete() { // This gets called twice, the first pass selects the input, the second pass then processes the command line arguments
+	if (server.args() > 0) { // Arguments were received
+		if (server.hasArg("Delete")) if (deleteFile(server.arg(0))) {
+			checkFileOverFloodAndDelete();
+		}
+		server.sendHeader("Connection", "close");
+	}
+	else SelectInput("File Delete", "Enter filename to delete", "Delete", "Delete");
+}
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+void SD_file_download(String filename) {
+	//File download = SPIFFS.open("/" + filename, "r");
+	File download = SPIFFS.open(filename, "r");
+	if (download) {
+		server.sendHeader("Content-Type", "text/text");
+		server.sendHeader("Content-Disposition", "attachment; filename=" + filename);
+		server.sendHeader("Connection", "close");
+		server.streamFile(download, "application/octet-stream");
+		download.close();
+	}
+	else ReportFileNotPresent("download");
+}
+bool deleteFile(String filename) {
+	bool filefound = false;
+	Serial.println("Tring to delete file  .... " + filename);
+	//File download = SPIFFS.open("/" + filename, "r");
+	File download = SPIFFS.open(filename, "r");
+	if (download) filefound = true;
+	download.close();
+	if (filefound) {
+		//SPIFFS.remove("/"+filename);
+		SPIFFS.remove(filename);
+		Serial.println("File deleted " + filename);
+
+		return true;
+	}
+	return false;
+}
+void refreshSPIFS() {
+	for (int i = 0; i < maxFiles; i++) {
+		filesStored[i].name = "";
+		filesStored[i].size = "";
+		filesStored[i].checked = false;
+		filesStored[i].number_csv = 0;
+	}
+	// startSPIFFS();
+   //  filesStoredIndex = 0;
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+void SendHTML_Content() {
+	Serial.println("webpage: " + String(webpage.length()));
+	server.sendContent(webpage);
+	webpage = "";
+}
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+void SelectInput(String heading1, String heading2, String command, String arg_calling_name) {
+	char quote = '"';
+	SendHTML_Header();
+	webpage += F("<h3 class='rcorners_m'>"); webpage += heading1 + "</h3><br>";
+	webpage += F("<h3>"); webpage += heading2 + "</h3>";
+	webpage += F("<ul>");
+		
+	for (int i = 0; i < maxFiles; i++) {
+		webpage += F("<li>"); webpage += "<span id=" + String(quote)+"file" + i + String(quote);
+		webpage += F(">"); webpage += filesStored[i].name + "</span> <span>" + filesStored[i].size + "</span></li></br>";
+		// webpage += F("<h6>"); webpage += filesStored[i].name +"  "+ filesStored[i].size + "</h6>";
+	}
+	webpage += F("</ul>");
+	webpage += F("<script type = \"text/javascript\">");
+	// 20 - максимальное количество файлов, увеличить, если нужно больше
+	webpage += "for (let i = 0; i < "+String(maxFiles)+"; i++) {";
+	webpage +=		"var h6 = document.getElementById(`file${i}`);";
+	webpage +=			"if (!h6) continue;";
+	webpage +=			"let fileName = h6.innerText;";
+	webpage +=			"h6.onclick = function() {";
+	webpage +=				"document.getElementById('fileNameField').value = fileName;";
+	webpage +=			"}";
+	webpage += "}";
+	webpage += "</script>";
+	webpage += F("<FORM action='/"); webpage += command + "' method='post'>"; // Must match the calling argument e.g. '/chart' calls '/chart' after selection but with arguments!
+	webpage += F("<input type='text' name='"); webpage += arg_calling_name; webpage += F("' value='' id='fileNameField'><br>");
+	webpage += F("<type='submit' name='"); webpage += arg_calling_name; webpage += F("' value=''><br><br>");
+
+	append_page_footer();
+	SendHTML_Content();
+	SendHTML_Stop();
+}

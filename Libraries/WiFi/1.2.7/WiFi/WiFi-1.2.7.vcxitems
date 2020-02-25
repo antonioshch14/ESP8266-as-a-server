@@ -1,0 +1,43 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="Globals">
+    <MSBuildAllProjects>$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <ItemsProjectGuid>{49b74dff-467c-4d37-8cd3-1e828b58906d}</ItemsProjectGuid>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ProjectCapability Include="SourceItemsFromImports" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="$(MSBuildThisFileDirectory)src\WiFi.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)src\WiFiClient.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)src\WiFiServer.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)src\utility\server_drv.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)src\utility\spi_drv.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)src\utility\wifi_drv.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\WiFi.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\WiFiClient.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\WiFiServer.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\debug.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\server_drv.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\spi_drv.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\wifi_drv.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\wifi_spi.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\wl_definitions.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)src\utility\wl_types.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="$(MSBuildThisFileDirectory)keywords.txt" />
+    <Text Include="$(MSBuildThisFileDirectory)library.properties" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.adoc" />
+  </ItemGroup>
+</Project>
