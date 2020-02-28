@@ -143,7 +143,7 @@ private:
 	unsigned long taskLoop;
 
 };
-task task1(10000);//connection to NTP
+task task1(15000);//connection to NTP
 task taskSendNTPrequest(100);//sending NTP request
 //--------------------------NTP
 task taskMemmoryClear(5000);//check and clear memmory
@@ -377,7 +377,7 @@ void memoryStatus() {
 	Serial.printf("pageSize: %u \n", sppifs.pageSize);
 	Serial.printf("maxOpenFiles: %u \n", sppifs.maxOpenFiles);
 	Serial.printf("maxPathLength: %u \n", sppifs.maxPathLength);
-	if (100 * (totalBytes - usedBytes) / totalBytes < 25)if (deleteFile(findOldest())) refreshSPIFS();
+	if (100 * (totalBytes - usedBytes) / totalBytes < 40)if (deleteFile(findOldest())) refreshSPIFS();
 }
 
 void setup(void) {
@@ -417,6 +417,7 @@ void startWiFi() { // Try to connect to some given access points. Then wait for 
 }
 void stopWiFi() {
 	WiFi.disconnect();
+	Serial.println("Disconnect from WiFi router ");
 }
 //----------------------NTP--------------
 void startUDP() {
@@ -515,6 +516,10 @@ void display() {
 				getTime(&Time2dev.Day, &Time2dev.Hour, &Time2dev.Min, &Time2dev.Sec, Device2.time);
 				time = "d" + String(Time2dev.Day) + "h" + String(Time2dev.Hour) + "m" + String(Time2dev.Min) + "s" + String(Time2dev.Sec);
 				con = "2Str " + String(Device2.signal) + "." + String(dev2);
+				u8g2.setCursor(85, 15);
+				u8g2.print(Device2.temp);
+				u8g2.setCursor(85, 32);
+				u8g2.print(Device2.humid);
 			}
 			else devToShow++;
 		}
@@ -523,6 +528,10 @@ void display() {
 				getTime(&Time3dev.Day, &Time3dev.Hour, &Time3dev.Min, &Time3dev.Sec, Device3.time);
 				time = "d" + String(Time3dev.Day) + "h" + String(Time3dev.Hour) + "m" + String(Time3dev.Min) + "s" + String(Time3dev.Sec);
 				con = "3Str " + String(Device3.signal) + "." + String(dev3);
+				u8g2.setCursor(85, 15);
+				u8g2.print(Device3.temp);
+				u8g2.setCursor(85, 32);
+				u8g2.print(Device3.humid);
 			}
 			else devToShow ++;
 		}
@@ -562,11 +571,15 @@ bool connectToNtp() {// replies true if lookup is Ok, otherwise false
 	return false;
 }
 void loop(void) {
-	if (task1.check()) {Serial.println("Check()");
+	if (task1.check()) {Serial.println("Check() WiFi connection ");
 		if (WiFi.status() == WL_CONNECTED && !NTPconnected) {
 			Serial.println("WL_CONNECTED");
 			NTPconnected = connectToNtp(); // replies true if lookup is Ok, otherwise false
 			task1.ignor = NTPconnected;
+		}
+		else {
+			stopWiFi();
+			startWiFi();
 		}
 	}
 	if (NTPconnected) {
@@ -804,6 +817,7 @@ void HandleClients() {
 	
 
 void new_process_Msessage(String Message) {
+	int action = 0;;//1- get time,
 	int device = 0,index=0;
 	unsigned long value;
 	Device*Deviceptr= &Device_undidentified;
@@ -820,27 +834,39 @@ void new_process_Msessage(String Message) {
 	Deviceptr->name = value;
 	}
 	Deviceptr->lastRecieved = millis();
-	if (get_field_value(Message, "time:", &value, &index)) {
-		Deviceptr->time = value;
+	if (get_field_value(Message, "get:", &value, &index)) {
+		action = value;
 	}
-	if (get_field_value(Message, "signal:", &value, &index)) {
-		Deviceptr->signal = int(value);
+	if (!action) {
+		if (get_field_value(Message, "time:", &value, &index)) {
+			Deviceptr->time = value;
+		}
+		if (get_field_value(Message, "signal:", &value, &index)) {
+			Deviceptr->signal = int(value);
+		}
+		if (get_field_value(Message, "temp:", &value, &index)) {//index means that the value is float and it determens numbers after ','
+			Deviceptr->temp = value / pow(10, index);
+		}
+		if (get_field_value(Message, "humid:", &value, &index)) {
+			Deviceptr->humid = value / pow(10, index);
+		}
+		if (Deviceptr->name == 4) {
+			if (get_field_value(Message, "humidAv:", &value, &index)) {
+				Deviceptr->field1 = int(value / pow(10, index));
+			}
+			if (get_field_value(Message, "status:", &value, &index)) {
+				Deviceptr->status = int(value / pow(10, index));
+			}
+		}
+		logDeviceGotData(Deviceptr->name);
 	}
-	if (get_field_value(Message, "temp:", &value,&index)) {//index means that the value is float and it determens numbers after ','
-		Deviceptr->temp = value/pow(10,index);
-		}
-	if (get_field_value(Message, "humid:", &value, &index)) {
-		Deviceptr->humid = value / pow(10, index);
-		}
-	if (Deviceptr->name == 4) {
-		if (get_field_value(Message, "humidAv:", &value, &index)) {
-			Deviceptr->field1 = int(value / pow(10, index));
-		}
-		if (get_field_value(Message,"status:", &value, &index)) {
-			Deviceptr->status = int(value / pow(10, index));
-		}
+	switch (action)
+	{
+	case 1: sentToClientNew(device,"time:"+String(actualTime)+";");
+		break;
+	default:
+		break;
 	}
-	logDeviceGotData(Deviceptr->name);
 	//Serial.println("device: " + String(Deviceptr->name) + " time: " + String(Deviceptr->time) +
 	//	" signal: " + String(Deviceptr->signal));
 }
