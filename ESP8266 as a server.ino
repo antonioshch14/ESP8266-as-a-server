@@ -113,9 +113,7 @@ Device Device_undidentified;//assigneed for data if device name is unindentified
 int devToShow = 0;//counter which device to show
 float h = 0;
 float t = 0;
-int unsigned long timers[10];
-bool timer(int tNamber, unsigned long tDelay);
-long timeToCheckConnected = 60000;//time interval to check connected
+long timeToCheckConnected = 100000;//time interval to check connected
 void checkConnected();
 class task {
 public:
@@ -147,6 +145,7 @@ task task1(15000);//connection to NTP
 task taskSendNTPrequest(100);//sending NTP request
 //--------------------------NTP
 task taskMemmoryClear(5000);//check and clear memmory
+task checkconnection(60000);//check connected clients
 unsigned long intervalNTP = 60000; // Request NTP time every minute
 unsigned long prevNTP = 0;
 unsigned long lastNTPResponse = millis();
@@ -377,7 +376,7 @@ void memoryStatus() {
 	Serial.printf("pageSize: %u \n", sppifs.pageSize);
 	Serial.printf("maxOpenFiles: %u \n", sppifs.maxOpenFiles);
 	Serial.printf("maxPathLength: %u \n", sppifs.maxPathLength);
-	if (100 * (totalBytes - usedBytes) / totalBytes < 40)if (deleteFile(findOldest())) refreshSPIFS();
+	if (100 * (totalBytes - Device0.time) / totalBytes < 47)if (deleteFile(findOldest())) refreshSPIFS();
 }
 
 void setup(void) {
@@ -676,12 +675,15 @@ void loop(void) {
 			}
 		}
 		*/
-		if (timer(1, 60000)) { if (conected > 0) checkConnected(); }
+		if (checkconnection.check()) { if (conected > 0) checkConnected();
+							conected = WiFi.softAPgetStationNum();
+							}
 		if (timeUNIX && writeToLog.check()) logDeviceGotData(0);
 		if (Serial.available()) {// read serial for command
 			String SerialCommand = Serial.readStringUntil('\r');
 			if (SerialCommand == "memmory") memoryStatus();
 			else if (SerialCommand == "list") startSPIFFS();
+			else if (SerialCommand == "format") format();
 			else Serial.println("Print: memmory, list");
 		}
 		if (taskMemmoryClear.check()) {
@@ -689,12 +691,11 @@ void loop(void) {
 			taskMemmoryClear.period=60 * 1000;
 		}
 }
-bool timer(int tNamber, unsigned long tDelay) {
-	unsigned long current = millis();
-	if (current > (timers[tNamber] + tDelay)) {
-		timers[tNamber] = current; return true;
-	}
-	else return false;
+void format() {
+	if (SPIFFS.format())  Serial.println("fs formated");
+	else Serial.println("fs formate failed");
+	memoryStatus();
+	startSPIFFS();
 }
 void checkConnected() {//check the real status of sent message
 	unsigned long Tnow = millis();
@@ -704,11 +705,15 @@ void checkConnected() {//check the real status of sent message
 		else if (i == 1)Deviceptr = &Device2;
 		else if (i == 2)Deviceptr = &Device3;
 		else if (i == 3)Deviceptr = &Device4;
-		if (Deviceptr->lastRecieved + timeToCheckConnected < Tnow )Deviceptr->connected = false;
+		if (Deviceptr->lastRecieved + timeToCheckConnected < Tnow) {
+			Deviceptr->connected = false;
+			TCP_Clients[i].flush();
+			TCP_Clients[i].stop();
+			Serial.println("disconected  "+String(i));
+		}
 		else Deviceptr->connected = true;
 	}
 }
-
 void SetWifi(char* Name, char* Password) {
 	// Stop any previous WIFI
 	//WiFi.disconnect();
@@ -1319,7 +1324,7 @@ void refreshSPIFS() {
 		filesStored[i].checked = false;
 		filesStored[i].number_csv = 0;
 	}
-	// startSPIFFS();
+	startSPIFFS();
    //  filesStoredIndex = 0;
 }
 
