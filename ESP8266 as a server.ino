@@ -91,7 +91,18 @@ public:
 	float field1 = 0;//spare field, for bathroom used as humidAver
 	String logFileName;
 	bool newNameAssignedAfteShift;
+	String fieldsToLog;
+	int storedMessageInBuf;
 };
+struct storedLog {
+	String time;
+	String message;
+};
+storedLog Device0LogBuf[20];
+storedLog Device1LogBuf[20];
+storedLog Device2LogBuf[20];
+storedLog Device3LogBuf[20];
+storedLog Device4LogBuf[20];
 class Timed { //time of messages from devices
 public:
 	int Day=0;
@@ -440,24 +451,6 @@ uint32_t getTime() {
 	uint32_t UNIXTime = NTPTime - seventyYears+60*60*3;
 	return UNIXTime;
 }
-/*
-void sendNTPpacket(IPAddress& address) {
-	memset(NTPBuffer, 0, NTP_PACKET_SIZE);  // set all bytes in the buffer to 0
-	
-	NTPBuffer[0] = 0b11100011;   // LI, Version, Mode 
-	NTPBuffer[1] = 0;     // Stratum, or type of clock
-	NTPBuffer[2] = 6;     // Polling Interval
-	NTPBuffer[3] = 0xEC;  // Peer Clock Precision
-	// 8 bytes of zero for Root Delay & Root Dispersion
-	NTPBuffer[12] = 49;
-	NTPBuffer[13] = 0x4E;
-	NTPBuffer[14] = 49;
-	NTPBuffer[15] = 52;
-	UDP.beginPacket(address, 123); // NTP requests are to port 123
-	UDP.write(NTPBuffer, NTP_PACKET_SIZE);
-	UDP.endPacket();
-}
-*/
 inline int getSeconds(uint32_t UNIXTime) {
 	return UNIXTime % 60;
 }
@@ -830,7 +823,7 @@ void new_process_Msessage(String Message) {
 		device=int(value);
 	
 	switch (device) {// conunt message recieved from clients
-	case 1: Deviceptr=&Device1; dev1++;   break;
+	case 1: Deviceptr= &Device1; dev1++;   break;
 	case 2: Deviceptr = &Device2; dev2++;   break;
 	case 3: Deviceptr = &Device3;  dev3++; break;
 	case 4: Deviceptr = &Device4;  dev4++; break;
@@ -841,6 +834,8 @@ void new_process_Msessage(String Message) {
 	Deviceptr->lastRecieved = millis();
 	if (get_field_value(Message, "get:", &value, &index)) {
 		action = value;
+	} else if (get_field_value(Message, "log:", &value, &index)) {
+		logBuff(device, Message);
 	}
 	if (!action) {
 		if (get_field_value(Message, "time:", &value, &index)) {
@@ -872,8 +867,21 @@ void new_process_Msessage(String Message) {
 	default:
 		break;
 	}
-	//Serial.println("device: " + String(Deviceptr->name) + " time: " + String(Deviceptr->time) +
-	//	" signal: " + String(Deviceptr->signal));
+}
+void logBuff(int device, String message) {
+	int fieldBegin = message.indexOf("log:") + 4;
+	int filedEnd = message.indexOf(';', fieldBegin);
+	String message2log = message.substring(fieldBegin, filedEnd);
+	Serial.println("Message to log:"+ message2log);
+	switch (device) {
+	case 3: Device3.storedMessageInBuf++;
+			Device0LogBuf[Device3.storedMessageInBuf].message= message2log;
+			Device0LogBuf[Device3.storedMessageInBuf].time=String(Time_set.NowHour) + ":" + String(Time_set.NowMin) + ":" + String(Time_set.NowSec);
+			if (Device1.storedMessageInBuf > 18) logDeviceGotData(device);
+			break;
+	default:
+		break;
+	}
 }
 void logDeviceGotData(int deviceDataGot) {
 	bool assignNewName = false;
@@ -953,19 +961,29 @@ void logDeviceGotData(int deviceDataGot) {
 		}
 		//Serial.println("Appending temperature to file: " + Deviceptr->logFileName);
 		File tempLog = SPIFFS.open(Deviceptr->logFileName, "a"); // Write the time and the temperature to the csv file
-		tempLog.print(Time);
-		tempLog.print(',');
-		tempLog.print(Deviceptr->time);
-		tempLog.print(',');
-		tempLog.print(Deviceptr->signal);
-		tempLog.print(',');
-		tempLog.print(Deviceptr->temp);
-		tempLog.print(',');
-		tempLog.print(Deviceptr->humid);
-		tempLog.print(',');
-		tempLog.print(Deviceptr ->status);
-		tempLog.print(',');
-		tempLog.println(Deviceptr->field1);
+		if (deviceDataGot != 3) {
+			tempLog.print(Time);
+			tempLog.print(',');
+			tempLog.print(Deviceptr->time);
+			tempLog.print(',');
+			tempLog.print(Deviceptr->signal);
+			tempLog.print(',');
+			tempLog.print(Deviceptr->temp);
+			tempLog.print(',');
+			tempLog.print(Deviceptr->humid);
+			tempLog.print(',');
+			tempLog.print(Deviceptr->status);
+			tempLog.print(',');
+			tempLog.println(Deviceptr->field1);
+			
+		} else {
+			for (int i = 0; i < Device3.storedMessageInBuf; i++) {
+				tempLog.print(Device3LogBuf[i].time);
+				tempLog.print(',');
+				tempLog.print(Device3LogBuf[i].message);
+			}
+			Device3.storedMessageInBuf = 0;
+		}
 		tempLog.close();
 
 	}
