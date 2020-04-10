@@ -94,15 +94,12 @@ public:
 	String fieldsToLog;
 	int storedMessageInBuf;
 };
-struct storedLog {
-	String time;
-	String message;
-};
-storedLog Device0LogBuf[20];
-storedLog Device1LogBuf[20];
-storedLog Device2LogBuf[20];
-storedLog Device3LogBuf[20];
-storedLog Device4LogBuf[20];
+#define BUFFEROFLOG 20
+String Device0LogBuf[BUFFEROFLOG];
+String Device1LogBuf[BUFFEROFLOG];
+String Device2LogBuf[BUFFEROFLOG];
+String Device3LogBuf[BUFFEROFLOG];
+String Device4LogBuf[BUFFEROFLOG];
 class Timed { //time of messages from devices
 public:
 	int Day=0;
@@ -119,6 +116,7 @@ Device Device1;
 Device Device2;
 Device Device3;
 Device Device4; //bathroom
+
 
 Device Device_undidentified;//assigneed for data if device name is unindentified
 int devToShow = 0;//counter which device to show
@@ -207,7 +205,7 @@ public:
 	void updateDay() {
 		updateCurrecnt();
 		breakTime(&NowYear, &NowMonth, &NowDay, &NowWeekDay);
-		Serial.println(String(NowYear) + ":" + String(NowMonth) + ":" + String(NowDay) + ":" + String(NowWeekDay));
+		//Serial.println(String(NowYear) + ":" + String(NowMonth) + ":" + String(NowDay) + ":" + String(NowWeekDay));
 	}// call in setup and each time when new day comes 
 	bool Shift() {  //check whether there is a new day comes, first call causes alignement of tracked and checked day 
 		//Serial.println("lastShift " + String(lastShift) + "  *shift " + String(*shift));
@@ -415,7 +413,7 @@ void setup(void) {
   server.on("/download", File_Download);
   server.on("/Delete", File_Delete);
   server.begin();
-  
+  Device0.fieldsToLog = "Time general,sppifs_usedBytes,Temperature,Humidity";
 }
 void startWiFi() { // Try to connect to some given access points. Then wait for a connection
 	
@@ -671,7 +669,7 @@ void loop(void) {
 		if (checkconnection.check()) { if (conected > 0) checkConnected();
 							conected = WiFi.softAPgetStationNum();
 							}
-		if (timeUNIX && writeToLog.check()) logDeviceGotData(0);
+		if (writeToLog.check()) logBuff(0, "get:2;");
 		if (Serial.available()) {// read serial for command
 			String SerialCommand = Serial.readStringUntil('\r');
 			if (SerialCommand == "memmory") memoryStatus();
@@ -806,14 +804,8 @@ void HandleClients() {
 			new_process_Msessage(Message);
 			break;
 		}
-		
-	}
-
-			
-			                          
+	}                        
 }
-	
-
 void new_process_Msessage(String Message) {
 	int action = 0;;//1- get time,
 	int device = 0,index=0;
@@ -832,11 +824,7 @@ void new_process_Msessage(String Message) {
 	Deviceptr->name = value;
 	}
 	Deviceptr->lastRecieved = millis();
-	if (get_field_value(Message, "get:", &value, &index)) {
-		action = value;
-	} else if (get_field_value(Message, "log:", &value, &index)) {
-		logBuff(device, Message);
-	}
+	if (get_field_value(Message, "get:", &value, &index)) action = value;
 	if (!action) {
 		if (get_field_value(Message, "time:", &value, &index)) {
 			Deviceptr->time = value;
@@ -858,41 +846,75 @@ void new_process_Msessage(String Message) {
 				Deviceptr->status = int(value / pow(10, index));
 			}
 		}
-		logDeviceGotData(Deviceptr->name);
 	}
 	switch (action)
 	{
 	case 1: sentToClientNew(device,"time:"+String(actualTime)+";");
+		break;
+	case 2: logBuff(device, Message);
+		break;
+	case 3: Deviceptr->fieldsToLog= Message.substring((Message.indexOf("get:3;") + 6), (Message.indexOf(";", (Message.indexOf("get:3;") + 6))));
+		Serial.println("saved fields: " + Deviceptr->fieldsToLog);
 		break;
 	default:
 		break;
 	}
 }
 void logBuff(int device, String message) {
-	int fieldBegin = message.indexOf("log:") + 4;
+	int fieldBegin = message.indexOf("get:2;") + 6;
 	int filedEnd = message.indexOf(';', fieldBegin);
 	String message2log = message.substring(fieldBegin, filedEnd);
 	Serial.println("Message to log:"+ message2log);
+	String* DevicexLogBufptr;
+	Device* Deviceptr;
 	switch (device) {
-	case 3: Device3.storedMessageInBuf++;
-			Device0LogBuf[Device3.storedMessageInBuf].message= message2log;
-			Device0LogBuf[Device3.storedMessageInBuf].time=String(Time_set.NowHour) + ":" + String(Time_set.NowMin) + ":" + String(Time_set.NowSec);
-			if (Device1.storedMessageInBuf > 18) logDeviceGotData(device);
-			break;
+	case 0: DevicexLogBufptr = &Device0LogBuf[Device0.storedMessageInBuf];
+			Deviceptr = &Device0;
+			message2log =String(Deviceptr->time)+","+String(Deviceptr->temp)+","+ String(Deviceptr->humid);
+		break;
+	case 1: DevicexLogBufptr = &Device1LogBuf[Device1.storedMessageInBuf];
+		Deviceptr = &Device1;
+		break;
+	case 2: DevicexLogBufptr = &Device2LogBuf[Device2.storedMessageInBuf];
+		Deviceptr = &Device2;
+		break;
+	case 3: DevicexLogBufptr = &Device3LogBuf[Device3.storedMessageInBuf];
+		Deviceptr = &Device3;
+		break;
+	case 4: DevicexLogBufptr = &Device4LogBuf[Device4.storedMessageInBuf];
+		Deviceptr = &Device4;
+		break;
+
 	default:
 		break;
 	}
+	Time_set.updateDay();
+	*DevicexLogBufptr=String(Time_set.NowHour) + ":" + String(Time_set.NowMin) + ":" + String(Time_set.NowSec)+","+message2log;
+			if (Deviceptr->storedMessageInBuf > BUFFEROFLOG-2) logDeviceGotData(device);
+			else Deviceptr->storedMessageInBuf++;
+			
 }
 void logDeviceGotData(int deviceDataGot) {
 	bool assignNewName = false;
 	if (timeUNIX ) {
 		Device*Deviceptr ;
+		String* DevicexLogBufptr;
 			switch (deviceDataGot) {
-			case 0: Deviceptr = &Device0;    break;
-			case 1: Deviceptr = &Device1;    break;
-			case 2: Deviceptr = &Device2;    break;
-			case 3: Deviceptr = &Device3;   break;
-			case 4: Deviceptr = &Device4;   break;
+			case 0: Deviceptr = &Device0;   
+				DevicexLogBufptr = Device0LogBuf; 
+				break;
+			case 1: Deviceptr = &Device1;   
+				DevicexLogBufptr = Device1LogBuf;
+				break;
+			case 2: Deviceptr = &Device2;    
+				DevicexLogBufptr = Device2LogBuf;
+				break;
+			case 3: Deviceptr = &Device3;  
+				DevicexLogBufptr=Device3LogBuf;
+				break;
+			case 4: Deviceptr = &Device4;   
+				DevicexLogBufptr = Device4LogBuf;
+				break;
 			default:	Deviceptr = &Device_undidentified; break;
 			}
 		Time_set.updateDay();
@@ -953,38 +975,18 @@ void logDeviceGotData(int deviceDataGot) {
 					Fhour + Fmin + '_' + String(actualTime) + ".csv";
 				Serial.println("Appending temperature to file: " + Deviceptr->logFileName);
 				File tempLog = SPIFFS.open(Deviceptr->logFileName, "a"); // Write the time and the temperature to the csv file
-				tempLog.print(Time);
-				tempLog.println(",DeviceTime,Signal,Temp,Humid,Status,Field1");
+				tempLog.println(Deviceptr->fieldsToLog);
 				tempLog.close();
 				checkFileOverFloodAndDelete();               // Start the SPIFFS and list all contents
 			}
 		}
 		//Serial.println("Appending temperature to file: " + Deviceptr->logFileName);
 		File tempLog = SPIFFS.open(Deviceptr->logFileName, "a"); // Write the time and the temperature to the csv file
-		if (deviceDataGot != 3) {
-			tempLog.print(Time);
-			tempLog.print(',');
-			tempLog.print(Deviceptr->time);
-			tempLog.print(',');
-			tempLog.print(Deviceptr->signal);
-			tempLog.print(',');
-			tempLog.print(Deviceptr->temp);
-			tempLog.print(',');
-			tempLog.print(Deviceptr->humid);
-			tempLog.print(',');
-			tempLog.print(Deviceptr->status);
-			tempLog.print(',');
-			tempLog.println(Deviceptr->field1);
-			
-		} else {
-			for (int i = 0; i < Device3.storedMessageInBuf; i++) {
-				tempLog.print(Device3LogBuf[i].time);
-				tempLog.print(',');
-				tempLog.print(Device3LogBuf[i].message);
-			}
-			Device3.storedMessageInBuf = 0;
+		for (int i = 0; i < Deviceptr->storedMessageInBuf; i++) {
+				tempLog.println(*(DevicexLogBufptr+i));
 		}
-		tempLog.close();
+			Deviceptr->storedMessageInBuf = 0;
+			tempLog.close();
 
 	}
 }
@@ -1017,32 +1019,7 @@ bool get_field_value(String Message, String field, unsigned long* value,int* ind
 	else return false;
 	return true;
 }
-	/*void process_Message(String Message) {
-		if (Message[0] == 'D') { new_process_Msessage(Message); return;
-		}
-
-		bool tempEnd = false;
-		
-		int length = Message.length();
-		int SensorDataBegining = Message.indexOf('{');
-		if (SensorDataBegining == -1) { return; }
-		humid = "";
-		temp = "";
-		for (int i = SensorDataBegining+1;i<length;++i){
-			if (Message.charAt(i) == '}')break;
-			if (Message.charAt(i) == ',') {
-				tempEnd = true; continue;
-			}
-			if (!tempEnd) temp += Message.charAt(i);
-			else humid += Message.charAt(i);
-		}
-		temp.remove(4);
-		humid.remove(4);
-		
-
-		
-	}
-*/
+	
 String findOldest() {
 	unsigned long min = 4294967293;
 	int indexOfMin = 0;
@@ -1364,7 +1341,7 @@ void SelectInput(String heading1, String heading2, String command, String arg_ca
 	for (int i = 0; i < maxFiles; i++) {
 		webpage += F("<li>"); webpage += "<span id=" + String(quote)+"file" + i + String(quote);
 		webpage += F(">"); webpage += filesStored[i].name + "</span> <span>" + filesStored[i].size + "</span></li></br>";
-		// webpage += F("<h6>"); webpage += filesStored[i].name +"  "+ filesStored[i].size + "</h6>";
+		
 	}
 	webpage += F("</ul>");
 	webpage += F("<script type = \"text/javascript\">");
