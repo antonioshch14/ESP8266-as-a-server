@@ -744,7 +744,7 @@ bool sentToClientNew(int Client, String data) {
 
 	TCP_Clients[Client].setNoDelay(1);
 		TCP_Clients[Client].println(data);
-		Serial.println("data stent " + data);
+		Serial.println("stent to: " +String(Client)+" data: "+ data);
 		return true;
 	}
 	else return false;
@@ -838,8 +838,11 @@ void new_process_Msessage(String Message) {
 		if (get_field_value(Message, "humid:", &value, &index)) {
 			Deviceptr->humid = value / pow(10, index);
 		}
-		if (Deviceptr->name == 4) {
+		if (Deviceptr->name == 4 || Deviceptr->name == 1) {
 			if (get_field_value(Message, "humidAv:", &value, &index)) {
+				Deviceptr->field1 = int(value / pow(10, index));
+			}
+			if (get_field_value(Message, "air:", &value, &index)) {
 				Deviceptr->field1 = int(value / pow(10, index));
 			}
 			if (get_field_value(Message, "status:", &value, &index)) {
@@ -849,7 +852,7 @@ void new_process_Msessage(String Message) {
 	}
 	switch (action)
 	{
-	case 1: sentToClientNew(device,"time:"+String(actualTime)+";");
+	case 1: sentToClientNew(device-1,"time:"+String(actualTime)+";");
 		break;
 	case 2: logBuff(device, Message);
 		break;

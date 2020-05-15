@@ -1,25 +1,25 @@
 ﻿<!DOCTYPE html>
 
-	
+
 <html>
 
 <head>
-    
-    <title>File Server</title>
-     <meta name='viewport' content='user-scalable=yes,initial-scale=1.0,width=device-width'>
-     <style>
-         body {
-             max-width: 65%;
-             margin: 0 auto;
-             font-family: arial;
-             font-size: 105%;
-             text-align: center;
-             color: blue;
-             background-color: #F7F2Fd;
-         }
-      ul
 
-        {   display:block;
+    <title>File Server</title>
+    <meta name='viewport' content='user-scalable=yes,initial-scale=1.0,width=device-width'>
+    <style>
+        body {
+            max-width: 65%;
+            margin: 0 auto;
+            font-family: arial;
+            font-size: 105%;
+            text-align: center;
+            color: blue;
+            background-color: #F7F2Fd;
+        }
+
+        ul {
+            display: block;
             list-style-type: none;
             margin: 0.1em;
             padding: 0;
@@ -48,14 +48,14 @@
             font-size: 85%;
         }
 
-           
+
             li a:hover {
                 background-color: #EAE3EA;
                 border-radius: 0.375em;
                 font-size: 85%;
             }
 
-        
+
         section {
             font-size: 0.88em;
         }
@@ -72,6 +72,7 @@
             color: orange;
             font-size: 0.6em;
         }
+
         h3 {
             margin: 0.1em;
             font-size: 0.6em;
@@ -215,14 +216,21 @@
     <h3 class='rcorners_m'>File Download</h3>
     <br>
     <h3>Enter filename to download</h3>
-    <ul>
-        <li>
-            <span id=" file 1">  filesStored[1].name </span> <span>"  filesStored[i].size  "</span><br />
+    <div class="fileList">
+        
+           <div class="file1">
+            <span id=" file 1">  filesStored[1].name </span> <span>"  filesStored[i].size  "</span> 
+                                                             <button type="button" id="btn1" class="buttonSt"
+                                                                     onclick="myFunction()">
+                                                                download
+                                                             </button> 
+               </div>
+               </div><br />
             <span id=" file 2">  filesStored[2].name </span> <span>"  filesStored[i].size  "</span><br />
             <span id=" file 3">  filesStored[3].name </span> <span>"  filesStored[i].size  "</span><br />
             <span id=" file 4">  filesStored[4].name </span> <span>"  filesStored[i].size  "</span><br />
-        </li>
-    </ul>
+        
+    </div>
     <br>
     <script type="text/javascript">
         for (let i = 0; i < 20; i++) {
@@ -232,11 +240,11 @@
             h6.onclick = function () {
                 document.getElementById('fileNameField').value = fileName;
             }
-        }           
+        }
     </script>
     <FORM action="/dowload" method='post'>
         <input type="text" name="download" value="" id="fileNameField">
-        <type='submit' nade="download" value>
+        <type ='submit' nade="download" value>
             <br><br>
 
             <ul>
@@ -245,8 +253,8 @@
                 <li><a href='/Delete'>Delete</a></li>;
             </ul>
             <footer>©2020 Belov</footer>
-        </type='submit'>
-        </FORM>
+        </type>
+    </FORM>
 
 
 </body>
