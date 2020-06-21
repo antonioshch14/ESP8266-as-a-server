@@ -5,20 +5,33 @@
 
 //#include <WiFiClient.h>
 //#include <WiFi.h>
+//#include <SDFSFormatter.h>
+//#include <SDFS.h>
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <ESP8266WiFi.h>
-//#include <ESP8266WebServer.h>
 #include "DHTesp.h"
 #include <WiFiUdp.h>
-#include <FS.h>
+//#include <FS.h>
+#include <SD.h>
+//#include <SdFat.h>
+//#include "sdios.h"
 #include "Network.h"
 #include "Sys_Variables.h"
 #include "CSS.h"
 #include <SPI.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#define NO_GLOBAL_INSTANCES
+#define SD_CS_pin 15 //D8 (15) HCS, D7 (13) HMOSI, D6 (12) HMISO, D5 (14) HSCLK 
+#define DHTPIN 0
+//#define sendTriger 5 // triger to send data to client 3
+#define sendTriger2  4 // triger to send data to client 2
+#define DISPLPIN1 2 //D4,  was 12 D6
+#define DISPLPIN2 5 //D1, was 14 D5
 
+//bool SD_present;
+//SdFat SD;
 
 WiFiUDP UDP;                     // Create an instance of the WiFiUDP class to send and receive
 
@@ -30,10 +43,9 @@ const int NTP_PACKET_SIZE = 48;  // NTP time stamp is in the first 48 bytes of t
 byte NTPBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming and outgoing packets
 
 
-int     LED0 = 16;         // WIFI Module LED
-int sendTriger = 5; // triger to send data to client 3
-int sendTriger2 = 4; // triger to send data to client 2
 
+int emptyVariabeInt;//used for default poiters
+unsigned long emptyVariabeUL;
 bool sendBegin= false;
 bool sendBegin2 = false;
 //***************************************************************************************
@@ -64,7 +76,7 @@ float temp, humid;
 unsigned int port=0;
 DHTesp dht;
 
-U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, 12, 14);
+U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, DISPLPIN1 , DISPLPIN2);
 
 void process_Message(String);
 unsigned long now3 = millis();
@@ -73,11 +85,14 @@ int conected = 0;
 unsigned long dev1 = 0, dev2 = 0, dev3 = 0, dev4 = 0;
 
 bool started;
+bool showInTlg, showOutTlg, showLog;
 int Day=0, Time=0, Hour=0,Min=0,Sec=0;
 //void getTime();
 void getTime(int *Day,int *Hour,int*Min,int *Sec, unsigned long Now);
-bool get_field_value(String Message, String field, unsigned long* value, int* index );//reads a value from fields of message
+bool get_field_value(String Message, String field, unsigned long* value=0, int* index=0 );//reads a value from fields of message
 bool sentToClientNew(int Client, String data);//new send to client, sending data to a clinet, returns whther sending was succesfull
+String deviceSettingFile(String action, String settings, int line = 0);
+bool copyFileToSD(String fileToCopy, bool deleteAfterCopy);
 class Device{
 public:
 	int name=0;
@@ -92,6 +107,7 @@ public:
 	String logFileName;
 	bool newNameAssignedAfteShift;
 	String fieldsToLog;
+	//String settings;
 	int storedMessageInBuf;
 };
 #define BUFFEROFLOG 20
@@ -385,19 +401,23 @@ void memoryStatus() {
 	Serial.printf("pageSize: %u \n", sppifs.pageSize);
 	Serial.printf("maxOpenFiles: %u \n", sppifs.maxOpenFiles);
 	Serial.printf("maxPathLength: %u \n", sppifs.maxPathLength);
-	if (100 * (totalBytes - Device0.time) / totalBytes < 47)if (deleteFile(findOldest())) refreshSPIFS();
+	if (100 * (totalBytes - Device0.time) / totalBytes < 47) {
+		if (SD_present) {
+			if (copyFileToSD((findOldest()), true))refreshSPIFS();
+		} else if (deleteFile(findOldest())) refreshSPIFS();
+	}
+		
 }
 
 void setup(void) {
 	Serial.begin(115200);
   //dht.begin();
-  dht.setup(0, DHTesp::DHT11); 
+  dht.setup(DHTPIN, DHTesp::DHT11); 
   u8g2.begin();
   u8g2.setFont(u8g2_font_crox1c_tf);
   delay(700);
   SetWifi("DataTransfer","BelovSer");// setting up a Wifi AccessPoint
-  pinMode(LED0, INPUT);
-  pinMode(sendTriger, INPUT);
+ // pinMode(sendTriger, INPUT);
   pinMode(sendTriger2, INPUT);
   Serial.setDebugOutput(true);
   //---------------------------------
@@ -414,6 +434,17 @@ void setup(void) {
   server.on("/Delete", File_Delete);
   server.begin();
   Device0.fieldsToLog = "Time general,sppifs_usedBytes,Temperature,Humidity";
+  //Device1.settings = "stFrSrv:;tempDifoff:-3;tempDifon:0;humidon:3;humidoff:-2;airDifoff:0;airDifon:3;";
+  if (!SD.begin(SD_CS_pin)) { // see if the card is present and can be initialised. Wemos SD-Card CS uses D8 
+	  //if (!SD.begin(SD_CS_pin, SD_SCK_MHZ(50))) { // see if the card is present and can be initialised. Wemos SD-Card CS uses D8 
+	  Serial.println(F("Card failed or not present, no SD Card data logging possible..."));
+	  SD_present = false;
+  }
+  else
+  {
+	  Serial.println(F("Card initialised... file access enabled..."));
+	  SD_present = true;
+  }
 }
 void startWiFi() { // Try to connect to some given access points. Then wait for a connection
 	
@@ -488,6 +519,9 @@ void display() {
 				time = "d" + String(Day) + "h" + String(Hour) + "m" + String(Min) + "s" + String(Sec) + "con " + String(conected);
 				unsigned long total = dev1 + dev2 + dev3 + dev4;
 				con = String(getHours(actualTime))+":"+ String(getMinutes(actualTime))+":"+ String(getSeconds(actualTime))+ "m" + String(total);
+				u8g2.setCursor(85, 15);
+				if (SD_present)	u8g2.print("SDOK");
+				else u8g2.print("SDNOK");
 		}
 		if (devToShow == 1) {
 			if (Device1.connected) {
@@ -615,16 +649,7 @@ void loop(void) {
 		display();
 	}
 	
-	/*while(digitalRead(LED0) == HIGH){
-		if(!started)Serial.print("reading stopped  ");
-		started = true;
-		delay(500);
-		Serial.print(".");
-	}
-		if (started) {
-			Serial.println("reading began"); started = false;
-		}*/
-		if (Device3.connected) {
+			/*if (Device3.connected) {
 			if (!sendBegin && digitalRead(sendTriger) == HIGH) {
 
 				if (!sentToClientNew(2, "ON")) {
@@ -636,7 +661,7 @@ void loop(void) {
 
 				if (sentToClientNew(2, "OFF"))sendBegin = false;
 			}
-		}
+		}*/
 		if (Device2.connected) {
 			if (!sendBegin2 && digitalRead(sendTriger2) == HIGH) {
 
@@ -670,17 +695,114 @@ void loop(void) {
 							conected = WiFi.softAPgetStationNum();
 							}
 		if (writeToLog.check()) logBuff(0, "get:2;");
-		if (Serial.available()) {// read serial for command
-			String SerialCommand = Serial.readStringUntil('\r');
-			if (SerialCommand == "memmory") memoryStatus();
-			else if (SerialCommand == "list") startSPIFFS();
-			else if (SerialCommand == "format") format();
-			else Serial.println("Print: memmory, list");
-		}
+		if (Serial.available()) processMessageSerial(); // read serial for command
 		if (taskMemmoryClear.check()) {
 			memoryStatus();
 			taskMemmoryClear.period=60 * 1000;
 		}
+}
+void processMessageSerial() {
+	unsigned long device;
+	int empry;
+	String SerialCommand = Serial.readStringUntil('\r');
+	//Serial.println("read from serial: " + SerialCommand);
+	if (SerialCommand == "memmory") memoryStatus();
+	else if (SerialCommand == "list") startSPIFFS();
+	else if (SerialCommand == "format") format();
+	else if (SerialCommand == "showInTlgOn") showInTlg=true;
+	else if (SerialCommand == "showInTlgOff") showInTlg = false;
+	else if (SerialCommand == "showOutTlgOn") showOutTlg = true;
+	else if (SerialCommand == "showOutTlgOff") showOutTlg = false;
+	else if (SerialCommand == "showLogOn") showLog = true;
+	else if (SerialCommand == "showLogOff") showLog = false;
+	else if (SerialCommand == "startSD") startSD();
+	else if (SerialCommand == "listSD") readSD();
+	else if (get_field_value(SerialCommand, "send2device:", &device,&empry)){//format: send2device:1;{content}
+		  		int fieldBegin = SerialCommand.indexOf("{") + 1;
+				int filedEnd = SerialCommand.indexOf('}', fieldBegin);
+				String message = SerialCommand.substring(fieldBegin, filedEnd);
+				//Serial.println("message extracted: " + message);
+				sentToClientNew((int)device - 1, message);
+			}
+	else if (get_field_value(SerialCommand, "file:", &device, &empry)) {//format: file:1;{populate} file:1;{readAll}
+		//file:0;{update}[stFrSrv:1;tempDifoff:-10;tempDifon:10;humidon:33;humidoff:-2;airDifoff:0;airDifon:33;]
+		int fieldBegin = SerialCommand.indexOf("{") + 1;
+		int filedEnd = SerialCommand.indexOf('}', fieldBegin);
+		String action = SerialCommand.substring(fieldBegin, filedEnd);
+		String settings;
+		if (SerialCommand.indexOf("[")!=-1) {
+			fieldBegin = SerialCommand.indexOf("[") + 1;
+			filedEnd = SerialCommand.lastIndexOf(']');
+			settings = SerialCommand.substring(fieldBegin, filedEnd);
+		}
+		deviceSettingFile(action, settings,int(device));
+		//Serial.println(SerialCommand.substring(fieldBegin, filedEnd));
+		//Serial.println("message extracted: " + message);
+	}
+	else if (get_field_value(SerialCommand, "copyToSD:", &device, &empry)) {//format: copyToSD:1;{filename} to copy and delete other than 1 just copy
+		int fieldBegin = SerialCommand.indexOf("{") + 1;
+		int filedEnd = SerialCommand.indexOf('}', fieldBegin);
+		copyFileToSD(SerialCommand.substring(fieldBegin, filedEnd), (device == 1) ? true:false);
+	}
+	else Serial.println("Print: memmory, list");
+}
+bool startSD() {
+	//SDFSConfig();
+	if (!SD.begin(SD_CS_pin)) { // see if the card is present and can be initialised. Wemos SD-Card CS uses D8 
+		Serial.println(F("Card failed or not present, no SD Card data logging possible..."));
+		SD_present = false;
+		return false;
+	}
+	else {
+		SD_present = false; Serial.println("SD initialised");
+		return true;
+	}
+}
+String deviceSettingFile(String action,String settings, int line) {
+	/*if (action == "populate") {
+		File file = SPIFFS.open("/setting.csv", "a");
+		for (int i = 1; i <= 4;i++) {
+			file.println("stFrSrv:" + String(i) +";"+Device1.settings+ ";");
+					
+		}
+		Serial.println("populated, file size: " + String(file.size()));
+		file.close();
+	}
+	*/
+	if (action == "findField") {
+		File file = SPIFFS.open("/setting.csv", "r");
+		if (file.find(settings.c_str(), settings.length())) {
+			String data = file.readStringUntil('\n');
+			//Serial.println(data);
+			file.close();
+			return data;
+		}
+	}
+	if (action == "readAll") {
+		File file = SPIFFS.open("/setting.csv", "r");
+		for (int i = 0; i < 7; i++) {
+			Serial.println(file.readStringUntil('\n'));
+		}
+		file.close();
+	}
+	if (action == "update") {
+		File file = SPIFFS.open("/setting.csv", "r");
+		String buffer[10];
+		int i;
+		while (file.available() && i < 10) {
+			buffer[i] = file.readStringUntil('\n');
+			i++;
+		}
+		file.close();
+		deleteFile("/setting.csv");
+		buffer[line] = settings;
+		file = SPIFFS.open("/setting.csv", "a");
+		for (int ii = 0; ii < i; ii++) {
+			file.println(buffer[ii]);
+		}
+		file.close();
+	}
+		
 }
 void format() {
 	if (SPIFFS.format())  Serial.println("fs formated");
@@ -744,7 +866,7 @@ bool sentToClientNew(int Client, String data) {
 
 	TCP_Clients[Client].setNoDelay(1);
 		TCP_Clients[Client].println(data);
-		Serial.println("stent to: " +String(Client)+" data: "+ data);
+		if (showOutTlg)Serial.println("stent to: " +String(Client)+" data: "+ data);
 		return true;
 	}
 	else return false;
@@ -799,8 +921,10 @@ void HandleClients() {
 	for(int i=0;i<4;++i){
 		if (TCP_Clients[i].connected() && TCP_Clients[i].available()) {
 			Message = TCP_Clients[i].readStringUntil('\n');
-			Serial.print(" Content: ");
-			Serial.println(Message);
+			if (showInTlg) {
+				Serial.print(" Content: ");
+				Serial.println(Message);
+			}
 			new_process_Msessage(Message);
 			break;
 		}
@@ -852,12 +976,14 @@ void new_process_Msessage(String Message) {
 	}
 	switch (action)
 	{
-	case 1: sentToClientNew(device-1,"time:"+String(actualTime)+";");
+	case 1: if(NTPconnected) sentToClientNew(device-1,"time:"+String(actualTime)+";");
 		break;
 	case 2: logBuff(device, Message);
 		break;
 	case 3: Deviceptr->fieldsToLog= Message.substring((Message.indexOf("get:3;") + 6), (Message.indexOf(";", (Message.indexOf("get:3;") + 6))));
 		Serial.println("saved fields: " + Deviceptr->fieldsToLog);
+		break;
+	case 4: sentToClientNew(device - 1, "stFrSrv:" + String(device)+ deviceSettingFile("findField","stFrSrv:"+ String(device)));
 		break;
 	default:
 		break;
@@ -867,7 +993,7 @@ void logBuff(int device, String message) {
 	int fieldBegin = message.indexOf("get:2;") + 6;
 	int filedEnd = message.indexOf(';', fieldBegin);
 	String message2log = message.substring(fieldBegin, filedEnd);
-	Serial.println("Message to log:"+ message2log);
+	if (showLog)Serial.println("Message to log:"+ message2log);
 	String* DevicexLogBufptr;
 	Device* Deviceptr;
 	switch (device) {
@@ -1037,7 +1163,7 @@ String findOldest() {
 		}
 	}
 
-	Serial.printf(" File name %s position %d\n\r", filesStored[indexOfMin].name.c_str(), indexOfMin);
+	if (showLog)Serial.printf(" File name %s position %d\n\r", filesStored[indexOfMin].name.c_str(), indexOfMin);
 	if (found) {
 		filesStored[indexOfMin].checked = true;
 		return filesStored[indexOfMin].name;
@@ -1065,7 +1191,7 @@ int findLatest(int Dev) {
 		}
 	}
 
-	Serial.printf(" File latest %d device has name %s position %d\n\r", Dev,filesStored[indexOfMax].name.c_str(), indexOfMax);
+	if (showLog)Serial.printf(" File latest %d device has name %s position %d\n\r", Dev,filesStored[indexOfMax].name.c_str(), indexOfMax);
 	if (found) {
 		filesStored[indexOfMax].checked = true;
 		return indexOfMax;
@@ -1074,7 +1200,12 @@ int findLatest(int Dev) {
 };
 void checkFileOverFloodAndDelete() {
 	while (!startSPIFFS()) {
-		if (deleteFile(findOldest())) refreshSPIFS();
+		if (SD_present) {
+			if (copyFileToSD((findOldest()), true))refreshSPIFS();
+		}
+		else if (deleteFile(findOldest())) refreshSPIFS();
+		
+		//if (deleteFile(findOldest())) refreshSPIFS();
 		else break;
 	};               // Start the SPIFFS and list all contents
 }
@@ -1239,8 +1370,6 @@ void HomePage() {
 	SendHTML_Content();
 	SendHTML_Stop(); // Stop is needed because no content length was sent
 }
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void SendHTML_Header() {
 	//server.send(200, "text/plain", "Home page begins"); 
 	server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -1252,14 +1381,10 @@ void SendHTML_Header() {
 	SendHTML_Content();
 	webpage = "";
 }
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void SendHTML_Stop() {
 	server.sendContent("");
 	server.client().stop(); // Stop is needed because no content length was sent
 }
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 void ReportFileNotPresent(String target) {
 	SendHTML_Header();
 	webpage += F("<h3>File does not exist</h3>");
@@ -1268,8 +1393,6 @@ void ReportFileNotPresent(String target) {
 	SendHTML_Content();
 	SendHTML_Stop();
 }
-//===========================================================================================
-
 void File_Download() { // This gets called twice, the first pass selects the input, the second pass then processes the command line arguments
 	if (server.args() > 0) { // Arguments were received
 		if (server.hasArg("download")) SD_file_download(server.arg(0));
@@ -1286,7 +1409,6 @@ void File_Delete() { // This gets called twice, the first pass selects the input
 	}
 	else SelectInput("File Delete", "Enter filename to delete", "Delete", "Delete");
 }
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 void SD_file_download(String filename) {
 	//File download = SPIFFS.open("/" + filename, "r");
 	File download = SPIFFS.open(filename, "r");
@@ -1314,6 +1436,55 @@ bool deleteFile(String filename) {
 		return true;
 	}
 	return false;
+}
+void readSD() {
+	File root;
+	root = SD.open("/");
+	File entry=root.openNextFile();
+	while (entry) {                      // List the file system contents
+		String fileName = entry.name();
+		size_t fileSize = entry.size();
+		Serial.printf("\tFS File: %s, size: %s  \n\r", fileName.c_str(), formatBytes(fileSize).c_str()); //\r\n
+		entry = root.openNextFile();
+	}
+}
+void dateTime(uint16_t* date, uint16_t* time) {
+	Time_set.updateDay();
+	*date = FAT_DATE((uint16_t)Time_set.NowYear, (uint8_t)Time_set.NowMonth, (uint8_t)Time_set.NowDay);
+
+	// return time using FAT_TIME macro to format fields
+	*time = FAT_TIME((uint8_t)Time_set.NowHour, (uint8_t)Time_set.NowMin, (uint8_t)Time_set.NowSec);
+	//Serial.println("*date:" + String(*date) + "  *time=" + String(*time));
+}
+/*time_t myTimeCallback() {
+	Serial.println("actualTime: " + String(actualTime));
+	return actualTime; // UNIX timestamp
+}*/
+	
+bool copyFileToSD(String fileToCopy,bool deleteAfterCopy) {
+	if (!startSD()) {
+		SD_present = false; return false;
+	}
+	else SD_present = true;
+	//SD.setTimeCallback(myTimeCallback);
+	sdfat::SdFile::dateTimeCallback(dateTime);
+	File sourceFile = SPIFFS.open(fileToCopy,"r");
+	if (sourceFile) {
+		File destFile = SD.open(fileToCopy, "a");
+		//destFile.setTimeCallback(myTimeCallback);
+
+			static uint8_t buf[512];
+				while (sourceFile.read(buf, 512)) {
+					destFile.write(buf, 512);
+				}
+				destFile.close();
+			if (deleteAfterCopy) SPIFFS.remove(fileToCopy);
+			else sourceFile.close() ;
+			Serial.printf("Copieng of file %s done \n", fileToCopy.c_str());
+			return true;
+	}
+	return false;
+	
 }
 void refreshSPIFS() {
 	for (int i = 0; i < maxFiles; i++) {
