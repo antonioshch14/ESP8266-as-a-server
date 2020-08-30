@@ -85,11 +85,22 @@ int conected = 0;
 unsigned long dev1 = 0, dev2 = 0, dev3 = 0, dev4 = 0;
 
 bool started;
-bool showInTlg, showOutTlg, showLog;
+//bool showInTlg=true, showOutTlg=true, showLog=true;
+bool showInTlg , showOutTlg , showLog ;
 int Day=0, Time=0, Hour=0,Min=0,Sec=0;
 //void getTime();
 void getTime(int *Day,int *Hour,int*Min,int *Sec, unsigned long Now);
-bool get_field_value(String Message, String field, unsigned long* value=0, int* index=0 );//reads a value from fields of message
+//bool get_field_value(String Message, String field, unsigned long* value=0, float* floatValue =0 );//reads a value from fields of message
+bool get_field_value(String Message, String field, unsigned long* ulValue = 0, float* floatValue = 0) {
+	int filedFirstLit = Message.indexOf(field);
+	if (filedFirstLit == -1) return false;
+	int fieldBegin = filedFirstLit + field.length();
+	int fieldEnd = Message.indexOf(';', fieldBegin);
+	String fieldString = Message.substring(fieldBegin, fieldEnd);
+	*floatValue = fieldString.toFloat();
+	*ulValue = fieldString.toDouble();
+	return true;
+}
 bool sentToClientNew(int Client, String data);//new send to client, sending data to a clinet, returns whther sending was succesfull
 String deviceSettingFile(String action, String settings, int line = 0);
 bool copyFileToSD(String fileToCopy, bool deleteAfterCopy);
@@ -675,13 +686,8 @@ void loop(void) {
 				if (sentToClientNew(1, "OFF"))sendBegin2 = false;
 			}
 		}
-
-		if (millis() > (now4 + 2000)) {//send continues messages to clients
-			now4 = millis();
-			if (Device4.connected) {
-				sentToClientNew(3, "humid:"+String(h+7)+";");
-			}
-		}
+		/**/
+		
 			/*
 			if (Device2.connected) {
 				sentToClientNew(1, String(millis()));
@@ -703,7 +709,6 @@ void loop(void) {
 }
 void processMessageSerial() {
 	unsigned long device;
-	int empry;
 	String SerialCommand = Serial.readStringUntil('\r');
 	//Serial.println("read from serial: " + SerialCommand);
 	if (SerialCommand == "memmory") memoryStatus();
@@ -717,14 +722,14 @@ void processMessageSerial() {
 	else if (SerialCommand == "showLogOff") showLog = false;
 	else if (SerialCommand == "startSD") startSD();
 	else if (SerialCommand == "listSD") readSD();
-	else if (get_field_value(SerialCommand, "send2device:", &device,&empry)){//format: send2device:1;{content}
+	else if (get_field_value(SerialCommand, "send2device:", &device)){//format: send2device:1;{content}
 		  		int fieldBegin = SerialCommand.indexOf("{") + 1;
 				int filedEnd = SerialCommand.indexOf('}', fieldBegin);
 				String message = SerialCommand.substring(fieldBegin, filedEnd);
 				//Serial.println("message extracted: " + message);
 				sentToClientNew((int)device - 1, message);
 			}
-	else if (get_field_value(SerialCommand, "file:", &device, &empry)) {//format: file:1;{populate} file:1;{readAll}
+	else if (get_field_value(SerialCommand, "file:", &device)) {//format: file:1;{populate} file:1;{readAll}
 		//file:0;{update}[stFrSrv:1;tempDifoff:-10;tempDifon:10;humidon:33;humidoff:-2;airDifoff:0;airDifon:33;]
 		int fieldBegin = SerialCommand.indexOf("{") + 1;
 		int filedEnd = SerialCommand.indexOf('}', fieldBegin);
@@ -739,7 +744,7 @@ void processMessageSerial() {
 		//Serial.println(SerialCommand.substring(fieldBegin, filedEnd));
 		//Serial.println("message extracted: " + message);
 	}
-	else if (get_field_value(SerialCommand, "copyToSD:", &device, &empry)) {//format: copyToSD:1;{filename} to copy and delete other than 1 just copy
+	else if (get_field_value(SerialCommand, "copyToSD:", &device)) {//format: copyToSD:1;{filename} to copy and delete other than 1 just copy
 		int fieldBegin = SerialCommand.indexOf("{") + 1;
 		int filedEnd = SerialCommand.indexOf('}', fieldBegin);
 		copyFileToSD(SerialCommand.substring(fieldBegin, filedEnd), (device == 1) ? true:false);
@@ -932,12 +937,12 @@ void HandleClients() {
 }
 void new_process_Msessage(String Message) {
 	int action = 0;;//1- get time,
-	int device = 0,index=0;
-	unsigned long value;
+	int device = 0;
+	float valueFloat = 0;
+	unsigned long value=0;
 	Device*Deviceptr= &Device_undidentified;
-	if (get_field_value(Message, "Device:", &value, &index)) {
+	if (get_field_value(Message, "Device:", &value,&valueFloat)) {
 		device=int(value);
-	
 	switch (device) {// conunt message recieved from clients
 	case 1: Deviceptr= &Device1; dev1++;   break;
 	case 2: Deviceptr = &Device2; dev2++;   break;
@@ -948,30 +953,30 @@ void new_process_Msessage(String Message) {
 	Deviceptr->name = value;
 	}
 	Deviceptr->lastRecieved = millis();
-	if (get_field_value(Message, "get:", &value, &index)) action = value;
+	if (get_field_value(Message, "get:", &value, &valueFloat)) action = value;
 	if (!action) {
-		if (get_field_value(Message, "time:", &value, &index)) {
+		if (get_field_value(Message, "time:", &value, &valueFloat)) {
 			Deviceptr->time = value;
 		}
-		if (get_field_value(Message, "signal:", &value, &index)) {
+		if (get_field_value(Message, "signal:", &value, &valueFloat)) {
 			Deviceptr->signal = int(value);
 		}
-		if (get_field_value(Message, "temp:", &value, &index)) {//index means that the value is float and it determens numbers after ','
-			Deviceptr->temp = value / pow(10, index);
+		if (get_field_value(Message, "temp:", &value, &valueFloat)) {//index means that the value is float and it determens numbers after ','
+			Deviceptr->temp = valueFloat;
 		}
-		if (get_field_value(Message, "humid:", &value, &index)) {
-			Deviceptr->humid = value / pow(10, index);
+		if (get_field_value(Message, "humid:", &value, &valueFloat)) {
+			Deviceptr->humid = valueFloat;
 		}
 		if (Deviceptr->name == 4 || Deviceptr->name == 1) {
-			if (get_field_value(Message, "humidAv:", &value, &index)) {
-				Deviceptr->field1 = int(value / pow(10, index));
+			if (get_field_value(Message, "humidAv:", &value, &valueFloat)) {
+				Deviceptr->field1 = valueFloat;
 			}
-			if (get_field_value(Message, "air:", &value, &index)) {
+			/*if (get_field_value(Message, "air:", &value, &index)) {
 				Deviceptr->field1 = int(value / pow(10, index));
-			}
-			if (get_field_value(Message, "status:", &value, &index)) {
+			}*/
+			/*if (get_field_value(Message, "status:", &value, &index)) {
 				Deviceptr->status = int(value / pow(10, index));
-			}
+			}*/
 		}
 	}
 	switch (action)
@@ -984,6 +989,8 @@ void new_process_Msessage(String Message) {
 		Serial.println("saved fields: " + Deviceptr->fieldsToLog);
 		break;
 	case 4: sentToClientNew(device - 1, "stFrSrv:" + String(device)+ deviceSettingFile("findField","stFrSrv:"+ String(device)));
+		break;
+	case 5: sentToClientNew(device - 1, "humid:" + String(h) + ";");
 		break;
 	default:
 		break;
@@ -1119,35 +1126,7 @@ void logDeviceGotData(int deviceDataGot) {
 
 	}
 }
-bool get_field_value(String Message, String field, unsigned long* value,int* index) {
-	int fieldBegin = Message.indexOf(field)+ field.length();
-	int check_field = Message.indexOf(field);
-	int ii = 0;
-	*value = 0;
-	*index = 0;
-	bool indFloat = false;
-	if (check_field != -1) {
-		int filedEnd = Message.indexOf(';', fieldBegin);
-		if (filedEnd == -1) { return false; }
-		int i = 1;
-		char ch = Message[filedEnd - i];
-		while (ch != ' ' && ch != ':') {
-			if (isDigit(ch)) {
-				int val= ch - 48;
-				if (!indFloat)ii = i-1;
-				else ii = i-2;
-				*value = *value +((val * pow(10,ii)));
-			}
-			else if (ch == '.') { *index = i-1; indFloat = true; }
-			i++;
-			if (i > (filedEnd- fieldBegin+1)||i>10)break;
-			ch = Message[filedEnd - i];
-		}
-		
-	}
-	else return false;
-	return true;
-}
+
 	
 String findOldest() {
 	unsigned long min = 4294967293;
