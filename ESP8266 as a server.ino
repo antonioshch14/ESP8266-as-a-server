@@ -7,6 +7,20 @@
 //#include <WiFi.h>
 //#include <SDFSFormatter.h>
 //#include <SDFS.h>
+#include "Libraries/ESP8266SdFat/src/SdFat.h"
+#include "Libraries/SDFS/src/SDFS.h"
+//#include "Libraries/WiFi/1.2.7/WiFi/src/WiFi.h"
+//#include "Libraries/WiFi/1.2.7/WiFi/src/WiFiServer.h"
+//#include "Libraries/WiFi/1.2.7/WiFi/src/WiFiClient.h"
+#include <SDFSFormatter.h>
+//#include <SDFS.h>
+#include <SysCall.h>
+#include <sdios.h>
+//#include <SdFatConfig.h>
+//#include <SdFat.h>
+#include <MinimumSerial.h>
+#include <FreeStack.h>
+#include <BlockDriver.h>
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <ESP8266WiFi.h>
@@ -22,6 +36,7 @@
 #include <SPI.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+
 #define NO_GLOBAL_INSTANCES
 #define SD_CS_pin 15 //D8 (15) HCS, D7 (13) HMOSI, D6 (12) HMISO, D5 (14) HSCLK 
 #define DHTPIN 0
@@ -700,7 +715,7 @@ void loop(void) {
 		if (checkconnection.check()) { if (conected > 0) checkConnected();
 							conected = WiFi.softAPgetStationNum();
 							}
-		if (writeToLog.check()) logBuff(0, "get:2;");
+		if (writeToLog.check()) logBuff(0, "get:2;",false);
 		if (Serial.available()) processMessageSerial(); // read serial for command
 		if (taskMemmoryClear.check()) {
 			memoryStatus();
@@ -917,7 +932,7 @@ void HandleClients() {
 		//String readMess = Temp.readStringUntil('\r\n');
 		String readMess = Temp.readStringUntil('\n');
 		Serial.println(" First message of a new client : " + readMess);
-		
+		new_process_Msessage(readMess);
 			
 	}
 	
@@ -940,6 +955,7 @@ void new_process_Msessage(String Message) {
 	int device = 0;
 	float valueFloat = 0;
 	unsigned long value=0;
+	bool flush = false;
 	Device*Deviceptr= &Device_undidentified;
 	if (get_field_value(Message, "Device:", &value,&valueFloat)) {
 		device=int(value);
@@ -966,7 +982,8 @@ void new_process_Msessage(String Message) {
 		}
 		if (get_field_value(Message, "humid:", &value, &valueFloat)) {
 			Deviceptr->humid = valueFloat;
-		}
+		} 
+		if (Message.indexOf("flush")!=-1) flush = true;
 		if (Deviceptr->name == 4 || Deviceptr->name == 1) {
 			if (get_field_value(Message, "humidAv:", &value, &valueFloat)) {
 				Deviceptr->field1 = valueFloat;
@@ -983,7 +1000,7 @@ void new_process_Msessage(String Message) {
 	{
 	case 1: if(NTPconnected) sentToClientNew(device-1,"time:"+String(actualTime)+";");
 		break;
-	case 2: logBuff(device, Message);
+	case 2: logBuff(device, Message,flush);
 		break;
 	case 3: Deviceptr->fieldsToLog= Message.substring((Message.indexOf("get:3;") + 6), (Message.indexOf(";", (Message.indexOf("get:3;") + 6))));
 		Serial.println("saved fields: " + Deviceptr->fieldsToLog);
@@ -996,7 +1013,7 @@ void new_process_Msessage(String Message) {
 		break;
 	}
 }
-void logBuff(int device, String message) {
+void logBuff(int device, String message,bool flush) {
 	int fieldBegin = message.indexOf("get:2;") + 6;
 	int filedEnd = message.indexOf(';', fieldBegin);
 	String message2log = message.substring(fieldBegin, filedEnd);
@@ -1028,6 +1045,7 @@ void logBuff(int device, String message) {
 	*DevicexLogBufptr=String(Time_set.NowHour) + ":" + String(Time_set.NowMin) + ":" + String(Time_set.NowSec)+","+message2log;
 			if (Deviceptr->storedMessageInBuf > BUFFEROFLOG-2) logDeviceGotData(device);
 			else Deviceptr->storedMessageInBuf++;
+	if (flush)logDeviceGotData(device);
 			
 }
 void logDeviceGotData(int deviceDataGot) {
